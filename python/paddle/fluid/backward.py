@@ -370,10 +370,11 @@ def _infer_var_data_type_shape_(grad_var_name, block):
     Infer the data type and shape of given grad variable
     """
     grad_var = block.desc.find_var(cpt.to_bytes(grad_var_name))
-    fwd_name = _strip_grad_suffix_(grad_var_name) # 去除 @GRAD 尾缀
+    fwd_name = _strip_grad_suffix_(grad_var_name)  # 去除 @GRAD 尾缀
     if block.desc.has_var_recursive(cpt.to_bytes(fwd_name)):
         fwd_var = block.desc.find_var_recursive(cpt.to_bytes(fwd_name))
-        grad_var.set_dtype(fwd_var.dtype()) # grad_var 与 fwd_var 保持一致的 dtype 和 shape
+        grad_var.set_dtype(
+            fwd_var.dtype())  # grad_var 与 fwd_var 保持一致的 dtype 和 shape
         grad_var.set_shape(fwd_var.shape())
     else:
         # TODO(jiabin): Maybe we should not to this to cause some unexpected error on dtype
@@ -473,6 +474,7 @@ def _accumulate_gradients_by_add_ops_(var_name,
                               "op_device": op_device}))
     renamed_vars[var_name] = [var_name]
 
+
 # op_descs 是反向图的 op_descs
 # 函数名的直观理解，就是将 重复的输出 加起来 (实际上，也把输入也加了起来)
 def _addup_repetitive_outputs_(op_descs, block_idx):
@@ -485,21 +487,27 @@ def _addup_repetitive_outputs_(op_descs, block_idx):
     _MAX_ADD_NUM_ = framework._global_flags()['FLAGS_max_inplace_grad_add']
     #pending_sum_ops = []
     # 1. 定义好几个数据结构 用于存储
-    pending_sum_ops = collections.OrderedDict()     # 存储 后继 聚合算子 字典
-    var_rename_count = collections.defaultdict(int) # var 更名次数
-    renamed_vars = collections.defaultdict(list)    # key：var_name,  value：rename 后的 new_name
-    renamed_var_start_idx = collections.defaultdict(list) # key：var_name,  val: start_idx ---- idx 记录的是反向图中 op 的序号(第一次 rename 的 op idx)
-    var_device = collections.defaultdict(str)       # 记录 var 对应的 device
+    pending_sum_ops = collections.OrderedDict()  # 存储 后继 聚合算子 字典
+    var_rename_count = collections.defaultdict(int)  # var 更名次数
+    renamed_vars = collections.defaultdict(
+        list)  # key：var_name,  value：rename 后的 new_name
+    renamed_var_start_idx = collections.defaultdict(
+        list
+    )  # key：var_name,  val: start_idx ---- idx 记录的是反向图中 op 的序号(第一次 rename 的 op idx)
+    var_device = collections.defaultdict(str)  # 记录 var 对应的 device
     for idx, op_desc in enumerate(op_descs):  # 2. 遍历 反向图
-        op_device_attr_name = core.op_proto_and_checker_maker.kOpDeviceAttrName()
+        op_device_attr_name = core.op_proto_and_checker_maker.kOpDeviceAttrName(
+        )
         op_device = ""
         if op_desc.has_attr(op_device_attr_name):
-            op_device = op_desc.attr(op_device_attr_name) # 获取 device
+            op_device = op_desc.attr(op_device_attr_name)  # 获取 device
         for var_name in op_desc.input_arg_names():  # 3. 遍历 反向 op 的输入
             if "@GRAD" not in var_name:
                 continue
-            if len(renamed_vars[var_name]) > 1: # 4. 检查 var_name 对应的 grad_var 有多少个，即多少个 grad_var 的梯度需要聚合，进行聚合操作
-                                                # （实际上是在当前反向 op 的输入之前，先接了 一个 sum op）
+            if len(
+                    renamed_vars[var_name]
+            ) > 1:  # 4. 检查 var_name 对应的 grad_var 有多少个，即多少个 grad_var 的梯度需要聚合，进行聚合操作
+                # （实际上是在当前反向 op 的输入之前，先接了 一个 sum op）
                 if len(renamed_vars[var_name]) > _MAX_ADD_NUM_:
                     _accumulate_gradients_by_sum_op_(var_name, renamed_vars,
                                                      pending_sum_ops, idx,
@@ -510,41 +518,53 @@ def _addup_repetitive_outputs_(op_descs, block_idx):
                                                       var_device[var_name])
 
         # param_name 是 反向 op 的输出
-        for param_idx, param_name in enumerate(op_desc.output_names()): # 5. 遍历反向 op 的输出
+        for param_idx, param_name in enumerate(op_desc.output_names(
+        )):  # 5. 遍历反向 op 的输出
             arg_names = op_desc.output(param_name)
             for arg_idx, var_name in enumerate(arg_names):
-                if "@GRAD" not in var_name: # 5.1 非@GRAD 忽略
-                    continue 
+                if "@GRAD" not in var_name:  # 5.1 非@GRAD 忽略
+                    continue
                 # if "@RENAME@" in var_name:
                 #    continue
-                if var_name == core.empty_var_name( # 5.2 empty_var ，inplace 忽略
+                if var_name == core.empty_var_name(  # 5.2 empty_var ，inplace 忽略
                 ) or var_name in op_desc.input_arg_names():
                     # empty variable or inplace op
                     continue
-                if len(renamed_vars[var_name]) == 0: # 6. 判断当前 遇到的 var_name 是否记录过，如果没有，加入 renamed_vars 记录起来，并且记录下反向图中的 op 序号
+                if len(
+                        renamed_vars[var_name]
+                ) == 0:  # 6. 判断当前 遇到的 var_name 是否记录过，如果没有，加入 renamed_vars 记录起来，并且记录下反向图中的 op 序号
                     # it's the first time we get the variable
-                    renamed_vars[var_name] = [var_name] # 记录下来
-                    renamed_var_start_idx[var_name] = idx # idx 记录的是反向图中 op 的序号
-                else: # 7. 判断当前 遇到的 var_name 有记录过，并且只是记录了一次
+                    renamed_vars[var_name] = [var_name]  # 记录下来
+                    renamed_var_start_idx[var_name] = idx  # idx 记录的是反向图中 op 的序号
+                else:  # 7. 判断当前 遇到的 var_name 有记录过，并且只是记录了一次
                     if len(renamed_vars[var_name]) == 1:
                         new_name = var_name + "@RENAME@block" + str(block_idx) + "@" + \
                             str(var_rename_count[var_name])                    # 7.1 创建 new_name 
-                        var_rename_count[var_name] += 1  # 更名次数+1            # 7.2  在 var_rename_count 中记录 var_name 更名次数
+                        var_rename_count[
+                            var_name] += 1  # 更名次数+1            # 7.2  在 var_rename_count 中记录 var_name 更名次数
                         # rename original var_name
-                        renamed_vars[var_name][0] = new_name # 修改原始的名字     # 7.3 renamed_vars 里面更新 名字
+                        renamed_vars[var_name][
+                            0] = new_name  # 修改原始的名字     # 7.3 renamed_vars 里面更新 名字
                         # before change: _rename_arg_(op_descs, var_name,
                         #                             new_name, 0, idx)
                         # rename arg from idx of the first appearance
                         # in backward, not always from 0
-                        
-                        # 在 op_descs 里面遍历 op, 修改对应的 var_name
-                        _rename_arg_(op_descs, var_name, new_name,              # 7.4 在 op_descs 里面修改对应的 var_name （需要遍历操作）
-                                     renamed_var_start_idx[var_name], idx)
-                        _rename_arg_(pending_sum_ops, var_name, new_name)       # 7.5 在 后接的 sum op 里面修改对应的 var_name
 
-                        for p in op_desc.output_names()[:param_idx]:    # 8. 遍历当前反向 op 的  前 param_idx 个输出
+                        # 在 op_descs 里面遍历 op, 修改对应的 var_name
+                        _rename_arg_(
+                            op_descs,
+                            var_name,
+                            new_name,  # 7.4 在 op_descs 里面修改对应的 var_name （需要遍历操作）
+                            renamed_var_start_idx[var_name],
+                            idx)
+                        _rename_arg_(
+                            pending_sum_ops, var_name,
+                            new_name)  # 7.5 在 后接的 sum op 里面修改对应的 var_name
+
+                        for p in op_desc.output_names(
+                        )[:param_idx]:  # 8. 遍历当前反向 op 的  前 param_idx 个输出
                             p_arg_names = op_desc.output(p)
-                            if var_name in p_arg_names:                 # 8.1 如果当前反向 op 的 输出var_name 是有被 rename 的话，需要更新
+                            if var_name in p_arg_names:  # 8.1 如果当前反向 op 的 输出var_name 是有被 rename 的话，需要更新
                                 op_desc.set_output(p, [
                                     new_name if x == var_name else x
                                     for x in p_arg_names
@@ -558,19 +578,26 @@ def _addup_repetitive_outputs_(op_descs, block_idx):
                     # 9. 如果记录次数不止是一次，也需要更名
                     new_name = var_name + "@RENAME@block" + str(block_idx) + "@" + \
                         str(var_rename_count[var_name])
-                    var_rename_count[var_name] += 1 # 9.1 更名次数 +1
-                    arg_names[arg_idx] = new_name   # 9.2 arg_names 对应位置更名
-                    op_desc.set_output(param_name, arg_names) # 9.3 op_desc 里面更名
-                    renamed_vars[var_name].append(new_name)   # 9.4 renamed_vars 里记录下来，新的命名
+                    var_rename_count[var_name] += 1  # 9.1 更名次数 +1
+                    arg_names[arg_idx] = new_name  # 9.2 arg_names 对应位置更名
+                    op_desc.set_output(param_name,
+                                       arg_names)  # 9.3 op_desc 里面更名
+                    renamed_vars[var_name].append(
+                        new_name)  # 9.4 renamed_vars 里记录下来，新的命名
                     # 9.5 record the latest device
                     var_device[var_name] = op_device
     # 到这，已经遍历完反向图
-    for var_name, inputs in six.iteritems(renamed_vars): # 10. 遍历所记录的 renamed_vars 字典, [var_name]:[new_name1, new_name2,...]
-        if len(renamed_vars[var_name]) > 1: 
+    for var_name, inputs in six.iteritems(
+            renamed_vars
+    ):  # 10. 遍历所记录的 renamed_vars 字典, [var_name]:[new_name1, new_name2,...]
+        if len(renamed_vars[var_name]) > 1:
             if len(renamed_vars[var_name]) > _MAX_ADD_NUM_:
-                _accumulate_gradients_by_sum_op_(             # 11. 将 op 输出的 那些 需要做梯度聚合的 var_name 进行聚合，即对应的 [new_name1, new_name2,...] 做聚合
-                    var_name, renamed_vars, pending_sum_ops,  # 实际是在后面加上 sum op 
-                    len(op_descs), var_device[var_name])
+                _accumulate_gradients_by_sum_op_(  # 11. 将 op 输出的 那些 需要做梯度聚合的 var_name 进行聚合，即对应的 [new_name1, new_name2,...] 做聚合
+                    var_name,
+                    renamed_vars,
+                    pending_sum_ops,  # 实际是在后面加上 sum op 
+                    len(op_descs),
+                    var_device[var_name])
             else:
                 _accumulate_gradients_by_add_ops_(
                     var_name, renamed_vars, pending_sum_ops,
@@ -591,6 +618,7 @@ def _addup_repetitive_outputs_(op_descs, block_idx):
 
     return op_descs
 
+
 # 移除不需要计算梯度的分支，即对反向图进行剪枝操作
 def _remove_no_grad_branch_(op_descs, no_grad_set):
     """
@@ -599,16 +627,17 @@ def _remove_no_grad_branch_(op_descs, no_grad_set):
         1. all outputs of the grad op are in 'no_grad_set'
         2. all grad inputs of the grad op are in 'no_grad_set'
     """
+
     # 1. 定义了一个 func 用于区分当前 op 是否可以移除
     def _op_can_be_removed_(op_desc, no_grad_set):
         out_arg_names = op_desc.output_arg_names()
         if len(out_arg_names) == 0 or _all_in_set_(out_arg_names, no_grad_set):
-            return True # 1.1 输出个数0 或者 所有输出都在 no_grad_set 里面， 可移除
+            return True  # 1.1 输出个数0 或者 所有输出都在 no_grad_set 里面， 可移除
         if _all_in_set_([
                 name for name in op_desc.input_arg_names()
                 if name.find(core.grad_var_suffix()) != -1
-        ], no_grad_set): # 1.2 所有那些 如  var@GRAD  的输入 都在 no_grad_set 里面， 可移除
-            no_grad_set.update(out_arg_names) # 1.3 更新一下 no_grad_set 集合
+        ], no_grad_set):  # 1.2 所有那些 如  var@GRAD  的输入 都在 no_grad_set 里面， 可移除
+            no_grad_set.update(out_arg_names)  # 1.3 更新一下 no_grad_set 集合
             return True
         return False
 
@@ -619,12 +648,12 @@ def _remove_no_grad_branch_(op_descs, no_grad_set):
     ]
     # 3. Insert fill_zeros_like_op, 因为有的反向 op 的输入 var@grad 虽然在 no_grad_set 里
     # （那是因为对应 var 的 stop_gradient=True），但是 var@grad 可以是其他反向 op 的输入（比如当前op的输入），所以这时候既然不对 var 算梯度，那就直接 fill zeros 即可
-    to_insert = [] # 存放待插入的 fill_zeros_like op desc
-    for idx, op_desc in enumerate(op_descs): # 3.1 遍历所有 反向 op
+    to_insert = []  # 存放待插入的 fill_zeros_like op desc
+    for idx, op_desc in enumerate(op_descs):  # 3.1 遍历所有 反向 op
         for arg in op_desc.input_arg_names():  # 3.2 拿到当前反向 op 的所有输入
             # 3.3 如果 arg is a gradient var name and arg should not have gradient
             if core.grad_var_suffix() in arg and arg in no_grad_set:
-                x_in = _strip_grad_suffix_(arg) # 3.3.1 移除 @GRAD 尾缀
+                x_in = _strip_grad_suffix_(arg)  # 3.3.1 移除 @GRAD 尾缀
                 # the reason should be: arg can be input of another grad op
                 # and the op is a not-to-remove op
                 to_insert.append((_create_op_desc_(
@@ -634,7 +663,8 @@ def _remove_no_grad_branch_(op_descs, no_grad_set):
     # p[0] ----- _create_op_desc_
     list([op_descs.insert(p[1], p[0]) for p in reversed(to_insert)])
 
-    return op_descs # 5. 返回（剪枝 + 追加 fill_zeros_like op ）后的反向图 op_descs
+    return op_descs  # 5. 返回（剪枝 + 追加 fill_zeros_like op ）后的反向图 op_descs
+
 
 # 反向图 op_descs、前向图ops_path、反向图所有op记录的 grad_names input
 def _find_not_need_ops(grad_op_descs, forward_ops, input_grad_names_set):
@@ -654,6 +684,7 @@ def _find_not_need_ops(grad_op_descs, forward_ops, input_grad_names_set):
     Return:
         (set[core.OpDesc]): A set of OpDescs which should be pruned.
     """
+
     # 2. 新建一个内部 Var 类
     class Var(object):
         def __init__(self, var_name):
@@ -669,7 +700,8 @@ def _find_not_need_ops(grad_op_descs, forward_ops, input_grad_names_set):
         def add_pending_op(self, op):
             assert isinstance(op, Op)
             self.pendding_ops.append(op)
-     # 3. 新建一个内部 Op 类
+
+    # 3. 新建一个内部 Op 类
     class Op(object):
         def __init__(self, op_desc):
             self.op_desc = op_desc
@@ -685,6 +717,7 @@ def _find_not_need_ops(grad_op_descs, forward_ops, input_grad_names_set):
             self.outputs.append(var)
 
     var_versions = dict()
+
     # 4. 新建一个内部 _create_node 类
     def _create_node(name):
         if name not in var_versions.keys():
@@ -692,11 +725,13 @@ def _find_not_need_ops(grad_op_descs, forward_ops, input_grad_names_set):
         else:
             var_versions[name].append(Var(name))
         return var_versions[name][-1]
+
     # 5. 新建一个内部 _create_or_get_last_version_node 类
     def _create_or_get_last_version_node(name):
         if name not in var_versions.keys():
             var_versions[name] = [Var(name)]
         return var_versions[name][-1]
+
     # 6. 新建一个内部 _create_op_node 类
     def _create_op_node(op_desc):
         op_node = Op(op_desc)
@@ -713,16 +748,16 @@ def _find_not_need_ops(grad_op_descs, forward_ops, input_grad_names_set):
     # 7. Record the forward vars， 这里有疑问，为何将 grad_names 放到 forward_vars_set 里面？？
     forward_vars_set = set() if input_grad_names_set is None else set(
         input_grad_names_set)
-    for op in forward_ops: # 8. 遍历前向的 op_path, 将所有输入和输出都放入 forward_vars_set， why ?
+    for op in forward_ops:  # 8. 遍历前向的 op_path, 将所有输入和输出都放入 forward_vars_set， why ?
         forward_vars_set.update(op.desc.input_arg_names())
         forward_vars_set.update(op.desc.output_arg_names())
 
     # 9. Record the vars which are created during backward and is not generated by op.
-    backward_vars_set = set() # 记录那些在反向过程会创建的 var, 但是这些 var 又没有被 op 生成
+    backward_vars_set = set()  # 记录那些在反向过程会创建的 var, 但是这些 var 又没有被 op 生成
     # special_op_nodes is the candidate sub-graph head node.
-    special_op_nodes = set() # 10. 子图头节点
-    for op_desc in grad_op_descs: # 11. 遍历反向图的 op_desc
-        input_set = set(op_desc.input_arg_names()) # 11.1 拿到当前反向 op 的输入集合
+    special_op_nodes = set()  # 10. 子图头节点
+    for op_desc in grad_op_descs:  # 11. 遍历反向图的 op_desc
+        input_set = set(op_desc.input_arg_names())  # 11.1 拿到当前反向 op 的输入集合
         # The new_vars are created during backward and is not generated by op.
         new_vars = input_set - forward_vars_set - backward_vars_set
         backward_vars_set.update(op_desc.output_arg_names())
@@ -757,7 +792,7 @@ def _find_not_need_ops(grad_op_descs, forward_ops, input_grad_names_set):
     grad_op_descs_set = set(grad_op_descs)
     # If a backward computational graph is simply one sub-graph header, the
     # not_need_op_descs will be whole graph, this IF clause avoids it.
-    if grad_op_descs_set == not_need_op_descs_set: # 13. 特殊情况不裁剪
+    if grad_op_descs_set == not_need_op_descs_set:  # 13. 特殊情况不裁剪
         return set()
     return not_need_op_descs_set
 
@@ -1055,15 +1090,16 @@ def _rename_grad_name_(name, grad_order):
     return 'grad/' * grad_order + name
 
 
-def _append_backward_ops_(block, # 前向 ops 所在的 block 
-                          ops,   # op_path 里的 op， 对应的 反向 op 都需要创建
-                          target_block, # 同 block 
-                          no_grad_dict, # 哪些 var 不需要计算 grad
-                          grad_to_var,  # 空字典传入
-                          callbacks=None,
-                          input_grad_names_set=None, # 一个命名很奇葩的 set， 记录反向图中用作输入的 grad_var
-                          op_path_dict=None, # 主要是记录 sub_block 的 op_path
-                          distop_context=None):
+def _append_backward_ops_(
+        block,  # 前向 ops 所在的 block 
+        ops,  # op_path 里的 op， 对应的 反向 op 都需要创建
+        target_block,  # 同 block 
+        no_grad_dict,  # 哪些 var 不需要计算 grad
+        grad_to_var,  # 空字典传入
+        callbacks=None,
+        input_grad_names_set=None,  # 一个命名很奇葩的 set， 记录反向图中用作输入的 grad_var
+        op_path_dict=None,  # 主要是记录 sub_block 的 op_path
+        distop_context=None):
     """
     Create all grad ops, and insert them into given block
 
@@ -1094,8 +1130,8 @@ def _append_backward_ops_(block, # 前向 ops 所在的 block
     # 1. grad_op_descs holds created grad_op, and will be appended to target_block
     grad_op_descs = []
     program = block.program
-    
-    rename_var_map = {} # key:旧名字 -> val:新名字
+
+    rename_var_map = {}  # key:旧名字 -> val:新名字
 
     # 2. 根据 op_path 的反序创建 grad_op
     # add grad_op_desc by reversed ops
@@ -1119,7 +1155,7 @@ def _append_backward_ops_(block, # 前向 ops 所在的 block
             grad_sub_block_list.append(grad_sub_block.desc)
 
         # 3. Getting op's corresponding grad_op
-        grad_op_desc, op_grad_to_var = core.get_grad_op_desc( # 获得 grad_op_desc，即成功拿到反向 op desc; op_grad_to_var 是一个 map, 记录反向 op 与前向 op var 之间的对应关系 
+        grad_op_desc, op_grad_to_var = core.get_grad_op_desc(  # 获得 grad_op_desc，即成功拿到反向 op desc; op_grad_to_var 是一个 map, 记录反向 op 与前向 op var 之间的对应关系 
             op.desc, cpt.to_text(no_grad_dict[block.idx]), grad_sub_block_list)
         if distop_context is not None:
             for op_desc in grad_op_desc:
@@ -1130,7 +1166,7 @@ def _append_backward_ops_(block, # 前向 ops 所在的 block
         device_attr_name = core.op_proto_and_checker_maker.kOpDeviceAttrName()
         if op.desc.has_attr(device_attr_name):
             op_device = op.desc.attr(device_attr_name)
-            for op_desc in grad_op_desc: # 4.1 给反向 op 设置对应的 device 属性
+            for op_desc in grad_op_desc:  # 4.1 给反向 op 设置对应的 device 属性
                 op_desc._set_attr(device_attr_name, op_device)
 
         # 5. 处理多次调用 fluid.gradients 情况下，可能存在的同名问题，下面的注释真的一言难尽。。。
@@ -1143,9 +1179,9 @@ def _append_backward_ops_(block, # 前向 ops 所在的 block
         # forward network (y * y) may be have same names with first-time
         # fluid.gradients(y, x).
         # So rename here before _addup_repetitive_outputs_.
-        if program._appending_grad_times > 1: # 这个计数，用于记录是第几次调用 gradient，如果不是第一次则进入下面的处理
+        if program._appending_grad_times > 1:  # 这个计数，用于记录是第几次调用 gradient，如果不是第一次则进入下面的处理
             for op_desc in grad_op_desc:
-                if not _is_grad_op_(op): # 应该是一些特殊情况
+                if not _is_grad_op_(op):  # 应该是一些特殊情况
                     for name in op_desc.input_arg_names():
                         if name in rename_var_map:
                             op_desc._rename_input(name, rename_var_map[name])
@@ -1153,10 +1189,12 @@ def _append_backward_ops_(block, # 前向 ops 所在的 block
                     if "@GRAD" not in name:
                         continue
                     if block.desc.find_var(name.encode("ascii")):
-                        new_name = _rename_grad_name_(            # 执行 rename 操作
-                            name, program._appending_grad_times)  # 'grad/' * grad_order + name
-                        op_desc._rename_output(name, new_name)    # 设置 新 name
-                        rename_var_map[name] = new_name # 旧名字 -> 新名字，记录 旧：新 名字的关系
+                        new_name = _rename_grad_name_(  # 执行 rename 操作
+                            name, program._appending_grad_times
+                        )  # 'grad/' * grad_order + name
+                        op_desc._rename_output(name, new_name)  # 设置 新 name
+                        rename_var_map[
+                            name] = new_name  # 旧名字 -> 新名字，记录 旧：新 名字的关系
 
                         if name in op_grad_to_var:  # 如果 旧名字 也在 op_grad_to_var 里面，需要做替换
                             op_grad_to_var[new_name] = op_grad_to_var[name]
@@ -1168,7 +1206,7 @@ def _append_backward_ops_(block, # 前向 ops 所在的 block
         # for example, for while op, the grads maybe generated in next loop.
         # 6.1 第一次调 gradient 接口，其实不会执行进第一个分支
         # TODO：不是完全能 get 到
-        if input_grad_names_set is not None: # 6.2 非第一次调 gradient 接口
+        if input_grad_names_set is not None:  # 6.2 非第一次调 gradient 接口
             is_append_grad = False
             for op_desc in grad_op_desc:  # 6.2.1 遍历反向 op 
                 input_grad_names = [  # 6.2.2 拿到当前反向 op 的所有带有 @GRAD 尾缀的输入 
@@ -1178,20 +1216,22 @@ def _append_backward_ops_(block, # 前向 ops 所在的 block
                 # some code of gradient ops, like increment, are not very
                 # standard, there is no @GRAD in these ops' inputs.
                 if len(input_grad_names) == 0:
-                    is_append_grad = True # 特殊情况，忽略
+                    is_append_grad = True  # 特殊情况，忽略
                     break
                 # 6.2.3 如果 input_grad_names 有一些 在 input_grad_names_set 里面
                 if _some_in_set_(input_grad_names, input_grad_names_set):
                     grad_op_descs.append(op_desc)
                     is_append_grad = True
-                    for name in op_desc.output_arg_names(): # 又将反向 op 的输出，放入 input_grad_names_set 里面
+                    for name in op_desc.output_arg_names(
+                    ):  # 又将反向 op 的输出，放入 input_grad_names_set 里面
                         input_grad_names_set.add(name)
             if is_append_grad:
                 grad_to_var.update(op_grad_to_var)
-        else: # 6.1 第一次调 gradient，直接进这个分支
-            grad_op_descs.extend(grad_op_desc) # 处理完一个 反向op, 加入 grad_op_descs list 里
-            grad_to_var.update(op_grad_to_var) # 更新总的 grad_to_var 字典
-    
+        else:  # 6.1 第一次调 gradient，直接进这个分支
+            grad_op_descs.extend(
+                grad_op_desc)  # 处理完一个 反向op, 加入 grad_op_descs list 里
+            grad_to_var.update(op_grad_to_var)  # 更新总的 grad_to_var 字典
+
     # 以上，完成了整个反向图的构造
 
     # 7. 梯度聚合 相关
@@ -1210,8 +1250,10 @@ def _append_backward_ops_(block, # 前向 ops 所在的 block
     # 三个输入：反向图 op_descs、前向图 ops_path、反向图所有op记录的 grad_names input
     # 主要是处理反向图中的子图没有链接的问题 
     # TODO：不太理解这个背景，找嘉彬问一下
-    not_need_ops = _find_not_need_ops(grad_op_descs, ops, input_grad_names_set) # input_grad_names_set 辅助找到一些不需要的反向 op
- 
+    not_need_ops = _find_not_need_ops(
+        grad_op_descs, ops,
+        input_grad_names_set)  # input_grad_names_set 辅助找到一些不需要的反向 op
+
     # 10. 移除不需要的反向 op
     grad_op_descs = [
         op_desc for op_desc in grad_op_descs if op_desc not in not_need_ops
@@ -1223,7 +1265,7 @@ def _append_backward_ops_(block, # 前向 ops 所在的 block
     backward = core.op_proto_and_checker_maker.OpRole.Backward
     for op_desc in grad_op_descs:
         new_op_desc = target_block.desc.append_op()
-        new_op_desc.copy_from(op_desc) # 将创造的 反向 op_desc 加入
+        new_op_desc.copy_from(op_desc)  # 将创造的 反向 op_desc 加入
         new_op_desc._set_attr(op_role_attr_name, backward)
         grad_to_var["__current_op_desc__"] = new_op_desc
         if callbacks is not None:
@@ -1256,6 +1298,7 @@ def _find_parent_op_(sub_block):
     # sub_block may not be found.
     return None
 
+
 # start_op_idx 其实是反向 op 的起点
 # grad_info_map 空字典传入，运行完该方法后，作为输出（挺关键的一个输出）
 # grad_to_var 主要是记录，grad var 对应的 forward var
@@ -1283,13 +1326,13 @@ def _append_backward_vars_(block, start_op_idx, grad_to_var, grad_info_map):
     They should be considered as "already created" when scanning the inner 
     ops of while_grad ops.  
     '''
-    parent_op = _find_parent_op_(block) # 找到 block 的父节点 op
+    parent_op = _find_parent_op_(block)  # 找到 block 的父节点 op
     parent_op_vars = []
     if parent_op is not None:
         input_args = parent_op.input_arg_names()
         output_args = parent_op.output_arg_names()
         for in_arg in input_args:
-            if in_arg in output_args: # 应该是特殊 case，输入居然也在[输出]里面
+            if in_arg in output_args:  # 应该是特殊 case，输入居然也在[输出]里面
                 parent_op_vars.append(in_arg)
 
     # 遍历反向 op
@@ -1297,8 +1340,9 @@ def _append_backward_vars_(block, start_op_idx, grad_to_var, grad_info_map):
         op_desc = block.desc.op(op_idx)
         if op_desc.has_attr("sub_block"):
             sub_block = block.program.block(op_desc._block_attr_id("sub_block"))
-            _append_backward_vars_(sub_block, 0, grad_to_var, grad_info_map) # 递归调用
-        
+            _append_backward_vars_(sub_block, 0, grad_to_var,
+                                   grad_info_map)  # 递归调用
+
         # 构造反向 op 的输入列表，并且都是 grad_var 的
         grad_var_ins = [
             var for var in op_desc.input_arg_names() if _is_grad_var_(var)
@@ -1320,9 +1364,9 @@ def _append_backward_vars_(block, start_op_idx, grad_to_var, grad_info_map):
 
         # If the outputs of grad op is empty, just remove it
         if not outputs:
-            ops_to_remove.append(op_idx) # 如果某个反向 op 的输出是空，则当前这个反向 op 可以移除
+            ops_to_remove.append(op_idx)  # 如果某个反向 op 的输出是空，则当前这个反向 op 可以移除
             continue
-        else: # outputs 不为空的分支
+        else:  # outputs 不为空的分支
             '''
             If the output is not empty and there is any grad input, find 
             whether there is any existing input. If not, just remove it.
@@ -1330,10 +1374,11 @@ def _append_backward_vars_(block, start_op_idx, grad_to_var, grad_info_map):
             if grad_var_ins:
                 existing_grad_var_ins = [
                     var for var in grad_var_ins
-                    if block.desc.has_var_recursive(cpt.to_bytes(var)) or var in # has_var_recursive 意思是递归地去找是否有这个 var 的存在 --- 命名有点怪
+                    if block.desc.has_var_recursive(cpt.to_bytes(var)) or
+                    var in  # has_var_recursive 意思是递归地去找是否有这个 var 的存在 --- 命名有点怪
                     parent_op_vars
                 ]
-                if not existing_grad_var_ins: # 如果当前反向 op 的 grad_var_ins 找不到具体来自哪里，则当前反向 op 应该移除
+                if not existing_grad_var_ins:  # 如果当前反向 op 的 grad_var_ins 找不到具体来自哪里，则当前反向 op 应该移除
                     '''
                     FIXME(paddle-dev, zengjinle): rnn_memory_helper_grad is used
                     in recurrent op. The input of this op does not even exist in 
@@ -1342,23 +1387,24 @@ def _append_backward_vars_(block, start_op_idx, grad_to_var, grad_info_map):
                     would be pruned, and the calculation result would be wrong. 
                     Maybe we should re-design this op later...  
                     '''
-                    if op_desc.type() not in ['rnn_memory_helper_grad']: # 非特殊情况，移除
+                    if op_desc.type() not in ['rnn_memory_helper_grad'
+                                              ]:  # 非特殊情况，移除
                         ops_to_remove.append(op_idx)
                         continue
-        
+
         # 这下面才是真正开始做 _append_backward_vars_ 的操作
         new_vars = set()
         # create new gradient variables （加个背景，这里是在 block.desc 里面创建 var）
-        for grad_var_name in op_desc.output_arg_names(): # 遍历当前 反向 op 的所有输出 
+        for grad_var_name in op_desc.output_arg_names():  # 遍历当前 反向 op 的所有输出 
             if block.desc.has_var_recursive(cpt.to_bytes(
                     grad_var_name)) or grad_var_name == core.empty_var_name():
-                continue # 如果 block.desc 里面存在反向 op 的输出，或者 是一个 empty_var，则 跳过，看下一个 grad_var_name
+                continue  # 如果 block.desc 里面存在反向 op 的输出，或者 是一个 empty_var，则 跳过，看下一个 grad_var_name
             # 否则，在 block.desc 里面创建新 var，并且记录在 new_vars set 里面
             block.desc.var(cpt.to_bytes(grad_var_name))
             new_vars.add(grad_var_name)
-            if grad_var_name not in grad_to_var: # 如果 grad_var_name 不在 grad_to_var， 跳过; 值得注意的是，grad_to_var 是之前已经生成好的了，里面记录 【反向var：前向var】的映射关系
-                continue # 如果不在 grad_to_var 里面，证明这个  grad_var_name 不是我们的目标 反向var
-            
+            if grad_var_name not in grad_to_var:  # 如果 grad_var_name 不在 grad_to_var， 跳过; 值得注意的是，grad_to_var 是之前已经生成好的了，里面记录 【反向var：前向var】的映射关系
+                continue  # 如果不在 grad_to_var 里面，证明这个  grad_var_name 不是我们的目标 反向var
+
             # 来到这，grad_var_name 满足几个条件: 
             # 1. has_var_recursive 找不到（在 block.desc.var 域内）；2. grad_var_name in grad_to_var（证明是我们的目标 grad_var）
 
@@ -1370,32 +1416,35 @@ def _append_backward_vars_(block, start_op_idx, grad_to_var, grad_info_map):
         op_desc.infer_var_type(block.desc)
         op_desc.infer_shape(block.desc)
 
-        for arg in op_desc.output_arg_names(): # 遍历反向 op 的所有输出
+        for arg in op_desc.output_arg_names():  # 遍历反向 op 的所有输出
             if arg in new_vars:
-                _infer_var_data_type_shape_(arg, block) # 将 grad_var 的 dtype,shape 与 fwd_var 保持一致
+                _infer_var_data_type_shape_(
+                    arg, block)  # 将 grad_var 的 dtype,shape 与 fwd_var 保持一致
 
-    for op_idx in reversed(ops_to_remove): # 移除不需要的反向 op
+    for op_idx in reversed(ops_to_remove):  # 移除不需要的反向 op
         block.desc._remove_op(op_idx, op_idx + 1)
 
 
 def _rename_grad_(block, start_op_idx, grad_to_var, target_grad_map):
-    var_map = copy.copy(target_grad_map) # 可能为None(用户没提供)，可能不为None（用户提供了）
+    var_map = copy.copy(target_grad_map)  # 可能为None(用户没提供)，可能不为None（用户提供了）
     # var_map ==> [out@GRAD : targets_gradient.name]
-    for op_idx in range(start_op_idx, block.desc.op_size()): # 遍历反向图所有 op
-        op_desc = block.desc.op(op_idx) # 拿到反向 op desc
-        for name in op_desc.input_arg_names(): # 遍历反向 op 的所有输入
-            if name in var_map: # 
-                op_desc._rename_input(name, var_map[name]) # 修改反向op的 输入命名, 用 用户提供的那个替代
+    for op_idx in range(start_op_idx, block.desc.op_size()):  # 遍历反向图所有 op
+        op_desc = block.desc.op(op_idx)  # 拿到反向 op desc
+        for name in op_desc.input_arg_names():  # 遍历反向 op 的所有输入
+            if name in var_map:  # 
+                op_desc._rename_input(
+                    name, var_map[name])  # 修改反向op的 输入命名, 用 用户提供的那个替代
 
-        for name in op_desc.output_arg_names(): # 遍历反向 op 的所有输出
+        for name in op_desc.output_arg_names():  # 遍历反向 op 的所有输出
             if "@GRAD" not in name:
                 continue
             if block.desc.find_var(name.encode("ascii")):
-                new_name = unique_name.generate(name) # 在后面加一个序号
-                op_desc._rename_output(name, new_name) # 修改反向op的 输出命名
-                var_map[name] = new_name # var_map[旧名] = 新名
+                new_name = unique_name.generate(name)  # 在后面加一个序号
+                op_desc._rename_output(name, new_name)  # 修改反向op的 输出命名
+                var_map[name] = new_name  # var_map[旧名] = 新名
 
-    for g, ng in six.iteritems(var_map): # key: grad_name/grad_var, val: non_grad_name/var
+    for g, ng in six.iteritems(
+            var_map):  # key: grad_name/grad_var, val: non_grad_name/var
         if g in grad_to_var:
             grad_to_var[ng] = grad_to_var[g]
             grad_to_var.pop(g)
@@ -1814,17 +1863,20 @@ def _find_no_grad_vars(block, op_path, targets, no_grad_set):
     """
     output_names = _get_output_names(block, targets)
     no_grad_var = []
-    for i, op in reversed(list(enumerate(op_path))): # 反序 遍历 op_path
+    for i, op in reversed(list(enumerate(op_path))):  # 反序 遍历 op_path
         # If the op has sub_block, it is too complicated to find the correct no_grad_var.
         # sub_block 情况不处理
         # 只处理没有 sub_block 的情况
         if not op.has_attr("sub_block"):
-            for out_var in op.desc.output_arg_names(): # 遍历当前 op 的所有输出
-                if out_var not in output_names and out_var not in op.desc.input_arg_names() and not block.vars[out_var].stop_gradient: # 后边 stop_gradient 似乎有点奇怪
+            for out_var in op.desc.output_arg_names():  # 遍历当前 op 的所有输出
+                if out_var not in output_names and out_var not in op.desc.input_arg_names(
+                ) and not block.vars[
+                        out_var].stop_gradient:  # 后边 stop_gradient 似乎有点奇怪
                     no_grad_var.append(out_var)
-        for name in op.desc.input_arg_names(): # 遍历当前 op 的所有输入, name
-            if name not in no_grad_set:        # 如果 name 不在 no_grad_set
-                output_names.add(name)         # 则将其 name 加入 output_names 里面， 遍历的下一个 op 需要用到
+        for name in op.desc.input_arg_names():  # 遍历当前 op 的所有输入, name
+            if name not in no_grad_set:  # 如果 name 不在 no_grad_set
+                output_names.add(
+                    name)  # 则将其 name 加入 output_names 里面， 遍历的下一个 op 需要用到
     return set(no_grad_var)
 
 
@@ -1853,43 +1905,54 @@ def _find_op_path_(block,
     input_names = set([inp.name for inp in inputs])
     output_names = _get_output_names(block, targets)
     if op_path_dict is None:
-        op_path_dict = dict() # 前向还是反向？？，应该是前向
+        op_path_dict = dict()  # 前向还是反向？？，应该是前向
 
-    relevant_op_flags = [True] * len(block.ops) # 给 block 里所有 op 打上 flag, True
+    relevant_op_flags = [True] * len(block.ops)  # 给 block 里所有 op 打上 flag, True
 
     # All the inputs of the block are used if inputs is empty,
-    if inputs: # 用户提供的 inputs 不为空
-        for i, op in enumerate(block.ops): # 前向 遍历当前 block 里面的所有 op
+    if inputs:  # 用户提供的 inputs 不为空
+        for i, op in enumerate(block.ops):  # 前向 遍历当前 block 里面的所有 op
             if _some_in_set_(
-                    op.desc.input_arg_names(), #  op.desc.input_arg_names() 当前op所有输入。   input_names 是用户提供的一个输入
-                    input_names) and core.has_non_empty_grad_op_maker(op.type): # 并且当前 op 的反向 op 不是 empty_grad_op_maker
-                for name in op.desc.output_arg_names(): # 遍历op的输出names 
-                    if name not in no_grad_set: # 过滤一下
-                        input_names.add(name) # 为何将 op.desc.output_arg_names() 的 name 放入到 input_names 里面？？？
-                                              # 因为当前 op 可能有后继 op，即 当前 op 的输出 是 后继 op 的输入，统一都放在 input_names 中
+                    op.desc.input_arg_names(
+                    ),  #  op.desc.input_arg_names() 当前op所有输入。   input_names 是用户提供的一个输入
+                    input_names) and core.has_non_empty_grad_op_maker(
+                        op.type):  # 并且当前 op 的反向 op 不是 empty_grad_op_maker
+                for name in op.desc.output_arg_names():  # 遍历op的输出names 
+                    if name not in no_grad_set:  # 过滤一下
+                        input_names.add(
+                            name
+                        )  # 为何将 op.desc.output_arg_names() 的 name 放入到 input_names 里面？？？
+                        # 因为当前 op 可能有后继 op，即 当前 op 的输出 是 后继 op 的输入，统一都放在 input_names 中
 
-            else:# block 里，有些 op 的输入并不在用户提供的 inputs 里，所以这些 op 是没用使用到的，flags 记为 false
-                relevant_op_flags[i] = False # 未使用的 op，flags 改为 False, 即表明这些 op 不需要创建反向 op
+            else:  # block 里，有些 op 的输入并不在用户提供的 inputs 里，所以这些 op 是没用使用到的，flags 记为 false
+                relevant_op_flags[
+                    i] = False  # 未使用的 op，flags 改为 False, 即表明这些 op 不需要创建反向 op
 
     # 将 block.ops 的列表反转
-    for i, op in reversed(list(enumerate(block.ops))): # 反序 遍历 当前 block 里面的所有 op
+    for i, op in reversed(list(enumerate(
+            block.ops))):  # 反序 遍历 当前 block 里面的所有 op
         if op.has_attr("sub_block"):
             sub_block_id = op._block_attr_id("sub_block")
             sub_block = block.program.block(sub_block_id)
             sub_block_target_names = output_names & set(op.output_arg_names)
-            sub_block_path = _get_sub_block_path(sub_block, op,               # sub_block_path
-                                                 set(), op_path_dict,
-                                                 sub_block_target_names)
+            sub_block_path = _get_sub_block_path(
+                sub_block,
+                op,  # sub_block_path
+                set(),
+                op_path_dict,
+                sub_block_target_names)
             op_path_dict[sub_block_id] = sub_block_path
 
         if _some_in_set_(
                 op.desc.output_arg_names(),
                 output_names) and core.has_non_empty_grad_op_maker(op.type):
-            for name in op.desc.input_arg_names(): # 遍历当前 op 的输入 name
-                if name not in no_grad_set: # 过滤一下
-                    output_names.add(name)  # 为何将 op.desc.input_arg_names() 的 name 放入 output_names 里面？
-                                            # 因为现在是反向遍历，当前 op 的输入，是上一个 op 的输出
-        else: # block里，有些op的输出并不在用户提供的outputs里，所以这些op是没用使用到的，flags记为false
+            for name in op.desc.input_arg_names():  # 遍历当前 op 的输入 name
+                if name not in no_grad_set:  # 过滤一下
+                    output_names.add(
+                        name
+                    )  # 为何将 op.desc.input_arg_names() 的 name 放入 output_names 里面？
+                    # 因为现在是反向遍历，当前 op 的输入，是上一个 op 的输出
+        else:  # block里，有些op的输出并不在用户提供的outputs里，所以这些op是没用使用到的，flags记为false
             relevant_op_flags[i] = False
 
     if is_while:
@@ -1901,14 +1964,16 @@ def _find_op_path_(block,
                 relevant_op_flags[i] = True
 
     op_path = [
-        block.ops[i] for i in range(len(block.ops)) if relevant_op_flags[i] # relevant_op_flags 记录相关的前向 op
+        block.ops[i] for i in range(len(block.ops))
+        if relevant_op_flags[i]  # relevant_op_flags 记录相关的前向 op
     ]
 
     if inputs:
         for op in op_path:
             for name in op.desc.input_arg_names():
-                if name not in input_names and block.vars[name].stop_gradient:#  op_path 里，所有op的输入 name, 如果不在 input_names 并且 stop_gradient 的话，加入 no_grad_set
-                    no_grad_set.add(name)  
+                if name not in input_names and block.vars[
+                        name].stop_gradient:  #  op_path 里，所有op的输入 name, 如果不在 input_names 并且 stop_gradient 的话，加入 no_grad_set
+                    no_grad_set.add(name)
 
     return op_path
 
@@ -1957,7 +2022,8 @@ def calc_gradient(targets, inputs, target_gradients=None, no_grad_set=None):
     if no_grad_set is None:
         no_grad_set = set()
     else:
-        no_grad_set = _get_no_grad_set_name(copy.copy(no_grad_set)) # 6.1 做了些预处理
+        no_grad_set = _get_no_grad_set_name(
+            copy.copy(no_grad_set))  # 6.1 做了些预处理
     # 7. 从整个 prog 里找到 stop_gradients 
     # no_grad_dict[block.idx] = block_no_grad_set（var is stop_gradient and add suffix @GRAD）
     no_grad_dict = _get_stop_gradients_(prog)
@@ -1977,9 +2043,9 @@ def calc_gradient(targets, inputs, target_gradients=None, no_grad_set=None):
     # 12. 预处理 target_gradinets，总的来说，就是用户没提供，则 fill_constant 1.0，否则使用用户提供的
     for i, grad in enumerate(target_gradients):
         target = targets[i]  # 拿一个 y / out 出来
-        if grad is None:     # 为 None, fill_constant 1.0
-            grad_name = _append_grad_suffix_(target.name) # out -> out@GRAD
-            target_shape = target.name + '_shape' # out_shape
+        if grad is None:  # 为 None, fill_constant 1.0
+            grad_name = _append_grad_suffix_(target.name)  # out -> out@GRAD
+            target_shape = target.name + '_shape'  # out_shape
             block.desc.append_op().copy_from(
                 _create_op_desc_("shape", {'Input': [target.name]},
                                  {"Out": [target_shape]}, {}))
@@ -1992,9 +2058,12 @@ def calc_gradient(targets, inputs, target_gradients=None, no_grad_set=None):
                                            "dtype": target.dtype,
                                        })
 
-            block.desc.append_op().copy_from(op_desc) # block.desc 里面增加这个 op_desc
-            input_grad_names_set.add(grad_name) #  input_grad_names_set 什么鬼命名？input 是只对反向图来说，是输入, 这个放着 out@GRAD
-        else: # 非 None 情况
+            block.desc.append_op().copy_from(
+                op_desc)  # block.desc 里面增加这个 op_desc
+            input_grad_names_set.add(
+                grad_name
+            )  #  input_grad_names_set 什么鬼命名？input 是只对反向图来说，是输入, 这个放着 out@GRAD
+        else:  # 非 None 情况
             # 先预处理一些东西
             if target.block.idx != block_idx or target.block.program != prog:
                 raise ValueError("all targets must be in the same block")
@@ -2003,30 +2072,32 @@ def calc_gradient(targets, inputs, target_gradients=None, no_grad_set=None):
                     "The shapes of target and grad are different: %s %s" % (
                         target.name, grad.name))
             # _append_grad_suffix_(target.name) --- out->out@GRAD
-            target_grad_map[_append_grad_suffix_(target.name)] = grad.name  # grad.name ==> target_gradients 的名字
+            target_grad_map[_append_grad_suffix_(
+                target.name)] = grad.name  # grad.name ==> target_gradients 的名字
             # target_grad_map[out@GRAD] = grad.name(target_gradients.name), 
-            
-            input_grad_names_set.add(grad.name) 
+
+            input_grad_names_set.add(grad.name)
 
             # input_grad_names_set
             # this set is used to store the gradients' name which is generated by backward ops, and input_grad_names_set can help to prune the unnecessary
             # backward ops. —— 这个描述并不完全准确
 
-    # 13. 这段说明其实很难理解
-    # 是不是说，用于处理二阶微分的情形？？
-    # For double backward, input_grad_names is used for filter
-    # some non-used gradients op.  
-    # 未使用反向 op ?
-    # 当第一次调用 gradient, input_grad_names_set = None
-    # 如果不是第一次调用 gradient, 保留 input_grad_names_set， 传入到 _append_backward_ops_ 里面
-    if prog._appending_grad_times == 1: 
+        # 13. 这段说明其实很难理解
+        # 是不是说，用于处理二阶微分的情形？？
+        # For double backward, input_grad_names is used for filter
+        # some non-used gradients op.  
+        # 未使用反向 op ?
+        # 当第一次调用 gradient, input_grad_names_set = None
+        # 如果不是第一次调用 gradient, 保留 input_grad_names_set， 传入到 _append_backward_ops_ 里面
+    if prog._appending_grad_times == 1:
         input_grad_names_set = None
 
     for input in inputs:
         if input.block.program != prog:
             raise "input must be in the same program as targets"
     # 14. 创建一个 block 级别的 no_grad_set
-    block_no_grad_set = set(map(_strip_grad_suffix_, no_grad_dict[0])) # 这里又去掉 @GRAD 尾缀
+    block_no_grad_set = set(map(_strip_grad_suffix_,
+                                no_grad_dict[0]))  # 这里又去掉 @GRAD 尾缀
 
     # 15. 创建一个 dict: op_path_dict, 应该是前向执行的 path, op_path_dict 主要是记录 sub_block 的 op path
     op_path_dict = dict()
@@ -2050,12 +2121,13 @@ def calc_gradient(targets, inputs, target_gradients=None, no_grad_set=None):
     block_no_grad_set.update(no_grad_vars)
 
     # 19. 更新 
-    no_grad_dict[0].update(list(map(_append_grad_suffix_, block_no_grad_set))) # 又加上 @GRAD 尾缀
-    
+    no_grad_dict[0].update(
+        list(map(_append_grad_suffix_, block_no_grad_set)))  # 又加上 @GRAD 尾缀
+
     # 这命名很奇葩，直接给一下 key val 岂不更好
     # key(str): grad variable name
     # val(str): corresponding forward variable name
-    grad_to_var = dict() # 记录反向图中所有的 【grad_var：fwd_var】映射关系
+    grad_to_var = dict()  # 记录反向图中所有的 【grad_var：fwd_var】映射关系
 
     grad_info_map = dict()
 
@@ -2065,11 +2137,11 @@ def calc_gradient(targets, inputs, target_gradients=None, no_grad_set=None):
     # TODO: 需要去理解里面提到的 sub_block 的概念
     _append_backward_ops_(
         block,
-        op_path, # 前向执行的 op_path
-        block, 
-        no_grad_dict, # 记录着哪些 var 是不需要计算 grad 的
+        op_path,  # 前向执行的 op_path
+        block,
+        no_grad_dict,  # 记录着哪些 var 是不需要计算 grad 的
         grad_to_var,  # 空字典传入
-        input_grad_names_set=input_grad_names_set, # 一个命名特别奇葩的东西，其实是用于记录 反向图 中 作为输入的一些 grad_var
+        input_grad_names_set=input_grad_names_set,  # 一个命名特别奇葩的东西，其实是用于记录 反向图 中 作为输入的一些 grad_var
         op_path_dict=op_path_dict)  # op_path_dict 主要是记录 sub_block 的 op path
 
     # Because calc_gradient may be called multiple times,
@@ -2079,7 +2151,9 @@ def calc_gradient(targets, inputs, target_gradients=None, no_grad_set=None):
     # 
     # 21. 对输入，输出都做了处理
     # fwd_op_num 实际上是作为 start_op_idx 
-    _rename_grad_(block, fwd_op_num, grad_to_var, target_grad_map) # target_grad，如果用户没传入，则为空map；如果用户传入，则不为空，target_grad_map[out@GRAD]= 传入的 target_gradients.name 
+    _rename_grad_(
+        block, fwd_op_num, grad_to_var, target_grad_map
+    )  # target_grad，如果用户没传入，则为空map；如果用户传入，则不为空，target_grad_map[out@GRAD]= 传入的 target_gradients.name 
 
     # 22. 增加反向 var ?
     # grad_info_map(dict)(output argument):
