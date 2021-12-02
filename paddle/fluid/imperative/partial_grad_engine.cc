@@ -934,9 +934,9 @@ void PartialGradTask::RunEachOp(OpBase *op) {
     auto partial_grad_grads = accumulator_info->SumGradient(
         std::move(grad_var), op->id(), &is_finished);
 
-    if (!partial_grad_grads.empty()) {
+    if (!partial_grad_grads.empty()) {  // create_graph_ = True
       auto sum_grad_var_grad =
-          accumulator_info->GradVarBase()->MutableGradVarBase();
+          accumulator_info->GradVarBase()->MutableGradVarBase();  // 梯度聚合后的值
       sum_grad_var_grad->SetOverridedStopGradient(false);
 
       auto assign_node = std::make_shared<GradOpNode>();
