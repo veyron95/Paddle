@@ -218,6 +218,11 @@ class KernelFactory {
   KernelMap& kernels() { return kernels_; }
 
   bool HasCompatiblePtenKernel(const std::string& op_type) const {
+    if (kernels_.find(TransToPtenKernelName(op_type)) != kernels_.end()) {
+      VLOG(3)
+          << "inner HasCompatiblePtenKernel: TransToPtenKernelName(op_type):"
+          << TransToPtenKernelName(op_type);
+    }
     return kernels_.find(TransToPtenKernelName(op_type)) != kernels_.end();
   }
 

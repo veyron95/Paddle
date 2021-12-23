@@ -18,6 +18,9 @@
 
 #include "paddle/fluid/operators/reduce_ops/reduce_op.h"
 
+#include "paddle/pten/kernels/cpu/grad_reduce_function.h"
+// paddle/pten/kernels/cpu/grad_reduce_function.h
+
 namespace paddle {
 namespace operators {
 

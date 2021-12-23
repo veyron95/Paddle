@@ -257,7 +257,7 @@ class ReduceKernel : public framework::OpKernel<T> {
     auto pt_out = paddle::experimental::MakePtenDenseTensor(*output);
 
     std::vector<int64_t> tmp_dims(dims.begin(), dims.end());
-
+    VLOG(3) << "== ReduceKernel forward Compute == ";
     // call new kernel
     pten::general::Reduce<DeviceContext, T, Functor>(
         dev_ctx, *pt_x.get(), reduce_all, tmp_dims, keep_dim,
