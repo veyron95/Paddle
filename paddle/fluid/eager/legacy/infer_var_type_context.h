@@ -137,6 +137,10 @@ class TensorRuntimeInferVarTypeContext
         out->MutableVar()->GetMutable<paddle::framework::LoDTensor>();
         break;
       }
+      case paddle::framework::proto::VarType::SELECTED_ROWS: {
+        out->MutableVar()->GetMutable<paddle::framework::SelectedRows>();
+        break;
+      }
       default: {
         PADDLE_THROW(paddle::platform::errors::NotFound(
             "Cannot found var type: %s while running runtime InferVarType",
@@ -153,6 +157,7 @@ class TensorRuntimeInferVarTypeContext
   paddle::framework::proto::VarType::Type GetOutputType(
       const std::string& name, const int& index = 0) const override {
     // TODO(jiabin): Support SelectedRows when we have it.
+    VLOG(3) << "======== in GetOutputType:" << name;
     return paddle::framework::proto::VarType::LOD_TENSOR;
   }
 
