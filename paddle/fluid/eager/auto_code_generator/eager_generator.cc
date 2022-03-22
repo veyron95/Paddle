@@ -26,7 +26,7 @@
 #include "paddle/fluid/pybind/op_function_generator.h"
 #include "paddle/fluid/pybind/pybind.h"
 #include "paddle/fluid/string/string_helper.h"
-
+#include "paddle/phi/core/compat/type_defs.h"
 // phi
 #include "paddle/phi/kernels/declarations.h"
 
@@ -76,6 +76,24 @@ static bool IgnoreGradAttribute(const std::string& op_type,
 }
 
 static void PrepareAttrMapForOps() {
+  // Handle "transpose2"
+  std::vector<int> axis = {0};
+  operators_with_attrs["transpose2"] = {};
+  operators_with_attrs["transpose2"]["axis"] = axis;
+
+  // Handle "pad3d"
+  std::vector<int> paddings = {0};
+  operators_with_attrs["pad3d"] = {};
+  operators_with_attrs["pad3d"]["paddings"] = paddings;
+
+  // Handle "pad"
+  operators_with_attrs["pad"] = {};
+  operators_with_attrs["pad"]["paddings"] = paddings;
+
+  std::vector<int> axes = {0};
+  operators_with_attrs["slice"] = {};
+  operators_with_attrs["slice"]["axes"] = axes;
+
   // Handle "fused_elemwise_add_activation"
   std::vector<std::string> functor_list = {"a", "b"};
   operators_with_attrs["fused_elemwise_add_activation"] = {};
@@ -88,7 +106,7 @@ static void PrepareAttrMapForOps() {
       functor_list;
 
   // Handle "reverse"
-  std::vector<int> axis = {0};
+  // std::vector<int> axis = {0};
   operators_with_attrs["reverse"] = {};
   operators_with_attrs["reverse"]["axis"] = axis;
 
@@ -537,7 +555,7 @@ static bool CheckOpProto(proto::OpProto* op_proto) {
   }
   const std::string& op_type = op_proto->type();
 
-  // Skip ooerator which is not inherit form OperatorWithKernel, like while,
+  // Skip operator which is not inherit form OperatorWithKernel, like while,
   // since only OperatorWithKernel can run in dygraph mode.
   auto& all_kernels = paddle::framework::OperatorWithKernel::AllOpKernels();
   if (!all_kernels.count(op_type) &&
@@ -968,6 +986,363 @@ static bool CollectGradInformationFromOpInfo(
   return true;
 }
 
+std::map<std::string, std::vector<std::shared_ptr<paddle::imperative::VarBase>>>
+ConvertInputs(const paddle::imperative::OpBase* op) {
+  /* ------ Prepare "ins" ------ */
+  std::map<std::string,
+           std::vector<std::shared_ptr<paddle::imperative::VarBase>>>
+      ins;
+  for (auto pairs : op->GetInsMap()) {
+    const std::string& in_name = pairs.first;
+    ins[in_name] = {std::shared_ptr<paddle::imperative::VarBase>(
+        new paddle::imperative::VarBase("auto_" + in_name))};
+    ins[in_name][0]->SetOverridedStopGradient(false);
+    ins[in_name][0]->MutableVar()->GetMutable<framework::LoDTensor>();
+  }
+
+  VLOG(6) << "Prepared Forward Ins Map, size = " << ins.size();
+  return ins;
+}
+
+std::map<std::string, std::vector<std::shared_ptr<paddle::imperative::VarBase>>>
+ConvertOutputs(const paddle::imperative::OpBase* op) {
+  std::map<std::string,
+           std::vector<std::shared_ptr<paddle::imperative::VarBase>>>
+      outs;
+  for (auto pairs : op->GetOutsMap()) {
+    const std::string& out_name = pairs.first;
+
+    // We always create output VarBase regardless of its dispensability.
+    // We dont know the exact number of outputs during code generation,
+    // however, simply identifying the slot name order would be enough
+    outs[out_name] = {std::shared_ptr<paddle::imperative::VarBase>(
+        new paddle::imperative::VarBase("auto_" + out_name))};
+    outs[out_name][0]->SetOverridedStopGradient(false);
+    outs[out_name][0]->MutableVar()->GetMutable<framework::LoDTensor>();
+  }
+  VLOG(6) << "Prepared Forward Outs Map, size = " << outs.size();
+  return outs;
+}
+
+static bool CollectDoubleGradInformationFromOpInfo(
+    const paddle::framework::OpInfo& op_info, GradNodeGenerationInfo* bwd_info,
+    GradNodeGenerationInfo* double_grad_op_info, bool* has_grad,
+    bool* has_double_grad) {
+  const proto::OpProto& op_proto = *op_info.proto_;
+  const std::string& op_type = op_proto.type();
+  std::vector<int64_t> dims = {1, 1, 1, 1};
+
+  /* ------ Prepare "ins" ------ */
+  std::map<std::string,
+           std::vector<std::shared_ptr<paddle::imperative::VarBase>>>
+      ins;
+
+  if (op_proto.inputs().size() == 1 && op_proto.outputs().size() == 1 &&
+      op_proto.inputs()[0].duplicable() &&
+      !op_proto.outputs()[0].duplicable()) {
+    VLOG(6) << "Handle op with special op_bases: " << op_type;
+    // @special case (sum_op): for ops with single duplicable input and single
+    // non-duplicable output
+    //                         feed in NUM_CREATED_DUP_INPUTS inputs to detect a
+    //                         special scenario.
+    const std::string& in_name = op_proto.inputs()[0].name();
+    ins[in_name] = {};
+    for (size_t i = 0; i < NUM_CREATED_DUP_INPUTS; i++) {
+      ins[in_name].emplace_back(std::shared_ptr<paddle::imperative::VarBase>(
+          new paddle::imperative::VarBase("auto_" + in_name + "_" +
+                                          std::to_string(i))));
+      ins[in_name][i]->SetOverridedStopGradient(false);
+      ins[in_name][i]->MutableVar()->GetMutable<framework::LoDTensor>();
+    }
+  } else {
+    for (const proto::OpProto::Var& input : op_proto.inputs()) {
+      const std::string& in_name = input.name();
+
+      // Handle dispensable input:
+      // 1. At python level, dispensable input will be detected at Python-C
+      // interface and filled with an empty vector
+      // 2. At C++ level, customers should always pass an empty vector for any
+      // dispensable input
+      // 3. During further lowering, there will always be a placeholder VarBase
+      // in ins/outs no matter whether it's dispensable or not
+      // As a result, we always create input VarBase regardless of its
+      // dispensability.
+
+      // Handle duplicable input: list(VarBase) or VarBase
+      // We dont know the exact number of inputs expected,
+      // but we only need to identify the slot name order,
+      // therefore fill in 1 single input VarBase is enough in this scenario
+
+      ins[in_name] = {std::shared_ptr<paddle::imperative::VarBase>(
+          new paddle::imperative::VarBase("auto_" + in_name))};
+      ins[in_name][0]->SetOverridedStopGradient(false);
+      ins[in_name][0]->MutableVar()->GetMutable<framework::LoDTensor>();
+    }
+  }
+  VLOG(6) << "Prepared Forward Ins Map, size = " << ins.size();
+
+  /* ------ Prepare "outs" ------ */
+  std::map<std::string,
+           std::vector<std::shared_ptr<paddle::imperative::VarBase>>>
+      outs;
+  for (const proto::OpProto::Var& output : op_proto.outputs()) {
+    const std::string& out_name = output.name();
+
+    // We always create output VarBase regardless of its dispensability.
+    // We dont know the exact number of outputs during code generation,
+    // however, simply identifying the slot name order would be enough
+    outs[out_name] = {std::shared_ptr<paddle::imperative::VarBase>(
+        new paddle::imperative::VarBase("auto_" + out_name))};
+    outs[out_name][0]->SetOverridedStopGradient(false);
+    outs[out_name][0]->MutableVar()->GetMutable<framework::LoDTensor>();
+  }
+  VLOG(6) << "Prepared Forward Outs Map, size = " << outs.size();
+
+  framework::AttributeMap attrs;
+  paddle::framework::AttributeMap default_attrs;
+  auto* attr_checker = op_info.Checker();
+  if (attr_checker) {
+    VLOG(6) << "Checking AttributeMap Settings";
+    attr_checker->Check(&attrs, true, /*only_check_exist_value=*/true);
+    default_attrs = attr_checker->GetDefaultAttrMap();
+  } else {
+    VLOG(6) << "Detected Null Attribute Checker, use empty default_attrs";
+  }
+
+  if (operators_with_attrs.count(op_type)) {
+    VLOG(6) << "Found operator " << op_type << " using special AttributeMap";
+    attrs = operators_with_attrs[op_type];
+  }
+
+  VLOG(6) << "Prepared Default Attributes Map, size = " << default_attrs.size();
+  for (const auto& iter : default_attrs) {
+    VLOG(6) << iter.first;
+  }
+
+  /* ---------------------------- */
+  /* --------- Backward --------- */
+  /* ---------------------------- */
+  /* ------ Fwd paddle::imperative::VariableWrapper Map ------ */
+  std::map<std::string,
+           std::vector<std::shared_ptr<paddle::imperative::VariableWrapper>>>
+      fwd_ins;
+  std::map<std::string,
+           std::vector<std::shared_ptr<paddle::imperative::VariableWrapper>>>
+      fwd_outs;
+  for (const auto& iter : ins) {
+    fwd_ins[iter.first] = {};
+    for (const std::shared_ptr<paddle::imperative::VarBase>& var_base :
+         iter.second) {
+      fwd_ins[iter.first].push_back(var_base->SharedVar());
+    }
+  }
+  for (const auto& iter : outs) {
+    fwd_outs[iter.first] = {};
+    for (const std::shared_ptr<paddle::imperative::VarBase>& var_base :
+         iter.second) {
+      fwd_outs[iter.first].push_back(var_base->SharedVar());
+    }
+  }
+  VLOG(6) << "Constructed Forward paddle::imperative::VariableWrapper Map";
+
+  /* ------ Run GradOpMaker ------ */
+  if (!op_info.dygraph_grad_op_maker_) {
+    VLOG(6) << op_type << " has no GradOpMaker";
+    bwd_info->SetGenerateForwardOnly(true);
+    *has_grad = false;
+    return false;
+  }
+
+  std::shared_ptr<paddle::imperative::GradOpNode> grad_node =
+      op_info.dygraph_grad_op_maker_(op_type, ins, outs, attrs, default_attrs,
+                                     {});
+
+  if (!grad_node) {
+    VLOG(6) << "Got nullptr GradOpNode for " << op_type
+            << " likely registered EmptyGradOpMaker";
+    bwd_info->SetGenerateForwardOnly(true);
+    *has_grad = false;
+    return false;
+  }
+  VLOG(6) << "op:" << op_type << " has Grad node";
+  VLOG(6) << "Prepared GradOpNode";
+
+  *has_grad = true;
+
+  /* ---- Collect OpBase's op_types ---- */
+  bwd_info->SetFwdOpType(op_type);
+  auto* op_base_infos = bwd_info->GetMutableOpBaseInfos();
+  op_base_infos->resize(grad_node->size());
+  for (auto iter = grad_node->begin(); iter < grad_node->end(); iter++) {
+    // Each OpBase
+    int index = std::distance(grad_node->begin(), iter);
+    paddle::imperative::OpBase& op_base = *iter;
+    (*op_base_infos)[index].SetOpBaseType(op_base.Type());
+  }
+
+  /* ------ Get Grad ins/outs/attrs ---- */
+  VLOG(6) << "In function size: " << grad_node->size();
+  for (auto iter = grad_node->begin(); iter < grad_node->end(); iter++) {
+    int index = std::distance(grad_node->begin(), iter);
+    auto* op_base_grad_ins = (*op_base_infos)[index].GetMutableGradIns();
+    auto* op_base_grad_outs = (*op_base_infos)[index].GetMutableGradOuts();
+    auto* op_base_grad_attrs = (*op_base_infos)[index].GetMutableGradAttrs();
+
+    const paddle::imperative::OpBase& op_base = *iter;
+    const std::map<std::string, paddle::imperative::SavedVariableWrapperList>&
+        g_ins = op_base.GetInsMap();
+    const std::map<std::string, paddle::imperative::SavedVariableWrapperList>&
+        g_outs = op_base.GetOutsMap();
+
+    *op_base_grad_attrs = op_base.Attrs();
+
+    for (const auto& it : g_ins) {
+      if (!op_base_grad_ins->count(it.first))
+        (*op_base_grad_ins)[it.first] = {};
+
+      for (auto vw_iter = it.second.begin(); vw_iter != it.second.end();
+           vw_iter++) {
+        std::shared_ptr<paddle::imperative::VariableWrapper> vw = *vw_iter;
+
+        (*op_base_grad_ins)[it.first].push_back(vw);
+
+        VLOG(6) << "GradIns Name: " << it.first;
+      }
+    }
+
+    for (const auto& it : g_outs) {
+      if (!op_base_grad_outs->count(it.first))
+        (*op_base_grad_outs)[it.first] = {};
+
+      for (auto vw_iter = it.second.begin(); vw_iter != it.second.end();
+           vw_iter++) {
+        std::shared_ptr<paddle::imperative::VariableWrapper> vw = *vw_iter;
+
+        (*op_base_grad_outs)[it.first].push_back(vw);
+
+        VLOG(6) << "GradOuts Name: " << it.first;
+      }
+    }
+  }
+
+  /* ------ Slot Name Matching ---- */
+  for (auto& iter : *op_base_infos) {
+    // grad_ins -> fwd_ins, fwd_outs
+    SlotNameMatching(iter.GetGradIns(), fwd_ins, fwd_outs,
+                     iter.GetMutableGradInsFwdSlotnameMap(),
+                     iter.GetMutableGradInsGradSlotnameMap());
+
+    // grad_outs -> fwd_ins, fwd_outs
+    SlotNameMatching(iter.GetGradOuts(), fwd_ins, fwd_outs,
+                     iter.GetMutableGradOutsSlotnameMap(),
+                     iter.GetMutableGradOutsSlotnameMap());
+  }
+  VLOG(6) << "Finished Grad Slotname Matching";
+
+  // TODO(wuweilong): create double_grad
+  // std::string grad_type = *op_base_infos[0].Type();
+  auto iter = grad_node->begin();
+  paddle::imperative::OpBase& bwd_op_base = *iter;
+  auto& grad_op_info =
+      paddle::framework::OpInfoMap::Instance().Get(bwd_op_base.Type());
+
+  std::shared_ptr<paddle::imperative::GradOpNode> double_grad_node =
+      grad_op_info.dygraph_grad_op_maker_(
+          bwd_op_base.Type(), ConvertInputs(&bwd_op_base),
+          ConvertOutputs(&bwd_op_base), bwd_op_base.Attrs(), default_attrs, {});
+
+  if (!grad_op_info.HasGradOpMaker() || !double_grad_node) {
+    VLOG(6) << "op:" << op_type << " without DoubleGrad node"
+            << " likely registered EmptyGradOpMaker";
+    double_grad_op_info->SetGenerateForwardOnly(true);
+    *has_double_grad = false;
+    return false;
+  }
+
+  VLOG(6) << "op:" << op_type << " has DoubleGrad node";
+  *has_double_grad = true;
+
+  // TODO(wuweilong) Prepared GradOpNode
+  VLOG(6) << " Preparing op's DoubleGrad ";
+  //
+  /* ---- Collect OpBase's op_types ---- */
+  double_grad_op_info->SetFwdOpType(bwd_op_base.Type());
+  auto* double_grad_op_base_infos =
+      double_grad_op_info->GetMutableOpBaseInfos();
+  double_grad_op_base_infos->resize(double_grad_node->size());
+  for (auto iter = double_grad_node->begin(); iter < double_grad_node->end();
+       iter++) {
+    // Each OpBase
+    int index = std::distance(double_grad_node->begin(), iter);
+    paddle::imperative::OpBase& op_base = *iter;
+    (*double_grad_op_base_infos)[index].SetOpBaseType(op_base.Type());
+  }
+
+  /* ------ Get Double Grad ins/outs/attrs ---- */
+  VLOG(6) << "In function size: " << double_grad_node->size();
+  for (auto iter = double_grad_node->begin(); iter < double_grad_node->end();
+       iter++) {
+    int index = std::distance(double_grad_node->begin(), iter);
+    auto* double_grad_op_base_grad_ins =
+        (*double_grad_op_base_infos)[index].GetMutableGradIns();
+    auto* double_grad_op_base_grad_outs =
+        (*double_grad_op_base_infos)[index].GetMutableGradOuts();
+    auto* double_grad_op_base_grad_attrs =
+        (*double_grad_op_base_infos)[index].GetMutableGradAttrs();
+
+    const paddle::imperative::OpBase& double_grad_op_base = *iter;
+    const std::map<std::string, paddle::imperative::SavedVariableWrapperList>&
+        g_ins = double_grad_op_base.GetInsMap();
+    const std::map<std::string, paddle::imperative::SavedVariableWrapperList>&
+        g_outs = double_grad_op_base.GetOutsMap();
+
+    *double_grad_op_base_grad_attrs = double_grad_op_base.Attrs();
+
+    for (const auto& it : g_ins) {
+      if (!double_grad_op_base_grad_ins->count(it.first))
+        (*double_grad_op_base_grad_ins)[it.first] = {};
+
+      for (auto vw_iter = it.second.begin(); vw_iter != it.second.end();
+           vw_iter++) {
+        std::shared_ptr<paddle::imperative::VariableWrapper> vw = *vw_iter;
+
+        (*double_grad_op_base_grad_ins)[it.first].push_back(vw);
+
+        VLOG(6) << "GradIns Name: " << it.first;
+      }
+    }
+
+    for (const auto& it : g_outs) {
+      if (!double_grad_op_base_grad_outs->count(it.first))
+        (*double_grad_op_base_grad_outs)[it.first] = {};
+
+      for (auto vw_iter = it.second.begin(); vw_iter != it.second.end();
+           vw_iter++) {
+        std::shared_ptr<paddle::imperative::VariableWrapper> vw = *vw_iter;
+
+        (*double_grad_op_base_grad_outs)[it.first].push_back(vw);
+
+        VLOG(6) << "GradOuts Name: " << it.first;
+      }
+    }
+  }
+
+  /* ------ Slot Name Matching ---- */
+  for (auto& iter : *op_base_infos) {
+    // grad_ins -> fwd_ins, fwd_outs
+    SlotNameMatching(iter.GetGradIns(), fwd_ins, fwd_outs,
+                     iter.GetMutableGradInsFwdSlotnameMap(),
+                     iter.GetMutableGradInsGradSlotnameMap());
+
+    // grad_outs -> fwd_ins, fwd_outs
+    SlotNameMatching(iter.GetGradOuts(), fwd_ins, fwd_outs,
+                     iter.GetMutableGradOutsSlotnameMap(),
+                     iter.GetMutableGradOutsSlotnameMap());
+  }
+  VLOG(6) << "Finished Grad Slotname Matching";
+
+  return true;
+}
 /* --------------------------------------------------- */
 /* --------- CodeGen: Forward GradNode Creation ------ */
 /* --------------------------------------------------- */
@@ -2385,6 +2760,8 @@ static void DygraphCodeGeneration(const std::string& output_dir) {
   std::string fwd_function_str = "";
   std::string grad_node_h_str = "";
   std::string grad_node_cc_str = "";
+  // std::string double_grad_node_h_str = "";
+  // std::string double_grad_node_cc_str = "";
 
   auto& op_info_map = paddle::framework::OpInfoMap::Instance().map();
 
@@ -2402,19 +2779,31 @@ static void DygraphCodeGeneration(const std::string& output_dir) {
     /* ---- Collect Information ---- */
     /* ----------------------------- */
 
-    ForwardGenerationInfo fwd_info;
-    GradNodeGenerationInfo bwd_info;
+    ForwardGenerationInfo fwd_info;           // forward
+    GradNodeGenerationInfo bwd_info;          // grad
+    GradNodeGenerationInfo double_grad_info;  // double_grad
 
     VLOG(6) << "-------- CollectInformationFromOpInfo -------";
 
     CollectForwardInformationFromOpInfo(op_info, &fwd_info);
 
-    bool is_available = CollectGradInformationFromOpInfo(op_info, &bwd_info);
+    // bool is_available = CollectGradInformationFromOpInfo(op_info, &bwd_info);
 
-    if (!is_available && !bwd_info.GenerateForwardOnly()) {
+    bool has_grad;
+    bool has_double_grad;
+    CollectDoubleGradInformationFromOpInfo(
+        op_info, &bwd_info, &double_grad_info, &has_grad, &has_double_grad);
+
+    if (!has_grad && !bwd_info.GenerateForwardOnly()) {
       VLOG(6) << "Skipped operator: " << op_type;
       continue;
     }
+
+    // bool has_grad;
+    // bool has_double_grad;
+    // GradNodeGenerationInfo tmp_bwd_info; // grad
+    // CollectDoubleGradInformationFromOpInfo(op_info, &bwd_info,
+    // &double_grad_info, &has_grad, &has_double_grad);
 
     VLOG(6) << "-------- PurifyOpProto -------";
     PurifyForwardOpProto(*op_proto, &fwd_info);
