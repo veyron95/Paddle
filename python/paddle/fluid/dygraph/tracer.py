@@ -64,12 +64,12 @@ final_state_name_mapping = {
         "axis2": "axis2",
         "out": "Out",
     },
-    "one_hot": {
-        "final_op_name": "final_state_one_hot",
-        "x": "X",
-        "num_class": "depth",
-        "out": "Out",
-    }
+    # "one_hot": {
+    #     "final_op_name": "final_state_one_hot",
+    #     "x": "X",
+    #     "num_class": "depth",
+    #     "out": "Out",
+    # }
 }
 
 
