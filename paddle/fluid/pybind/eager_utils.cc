@@ -474,6 +474,44 @@ paddle::CustomOpKernelContext CastPyArg2CustomOpKernelContext(PyObject* obj,
         arg_pos + 1, reinterpret_cast<PyTypeObject*>(obj->ob_type)->tp_name));
   }
 }
+
+// std::unordered_map<std::wstring, std::int32_t> CastPyArg2Vocab(PyObject* obj,
+// ssize_t arg_pos) {
+//   std::unordered_map<std::wstring, std::int32_t> ret;
+//   PyObject* key_list = nullptr;
+//   PyObject* value_list = nullptr;
+//   std::wstring_convert<std::codecvt_utf8<wchar_t>> kConverter;
+//   if (PyDict_Check(obj)) {
+//     Py_ssize_t size = PyDict_Size(obj);
+//     key_list = PyDict_Keys(obj);
+//     value_list = PyDict_Keys(obj);
+//     PyObject* key_i = nullptr;
+//     PyObject* value_i = nullptr;
+//     for (Py_ssize_t i = 0; i < size; i++) {
+//       key_i = PyList_GetItem(key_list, i);
+//       value_i = PyList_GetItem(value_list, i);
+//       std::string key = pybind::CastPyArg2AttrString(key_i, 0);
+//       std::int32_t value = pybind::CastPyArg2AttrLong(value_i, 0);
+//       std::wstring* res;
+//       try {
+//         *res = kConverter.from_bytes(key);
+//       } catch (std::range_error& e) {
+//         VLOG(3) << "The string " << key << " was converted to unicode
+//         failedly! ";
+//       }
+//       std::pair<std::wstring, std::int32_t>pair_i(*res, value);
+//       ret.insert(pair_i);
+//     }
+//   } else {
+//     PADDLE_THROW(platform::errors::InvalidArgument(
+//         "argument (position %d) must be "
+//         "dict, but got %s",
+//         arg_pos + 1,
+//         (reinterpret_cast<PyTypeObject*>(obj->ob_type))->tp_name));
+//   }
+//   return ret;
+// }
+
 PyObject* ToPyObject(bool value) {
   if (value) {
     Py_INCREF(Py_True);

@@ -16,7 +16,7 @@ limitations under the License. */
 #include "paddle/phi/common/int_array.h"
 #include "paddle/phi/common/scalar.h"
 #include "paddle/phi/core/dense_tensor.h"
-
+// #include "paddle/fluid/framework/string_array.h"
 #include "pybind11/pybind11.h"
 #include "pybind11/stl.h"
 namespace paddle {
@@ -56,6 +56,8 @@ std::vector<std::vector<size_t>> CastPyArg2VectorOfVectorOfSize_t(
     PyObject* obj, size_t arg_pos);
 framework::proto::VarType::Type CastPyArg2ProtoType(PyObject* obj,
                                                     ssize_t arg_pos);
+// std::unordered_map<std::wstring, std::int32_t> CastPyArg2Vocab(PyObject* obj,
+// ssize_t arg_pos);
 
 PyObject* ToPyObject(int value);
 PyObject* ToPyObject(uint32_t value);

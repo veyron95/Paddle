@@ -69,6 +69,7 @@ _final_state_op_type_mapping = {
     "elementwise_div": "final_state_divide",
     "elementwise_mul": "final_state_multiply",
     "matmul_v2": "final_state_matmul",
+    "equal": "final_state_equal",
 }
 
 

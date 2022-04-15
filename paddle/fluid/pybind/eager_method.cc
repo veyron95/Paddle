@@ -45,6 +45,7 @@ limitations under the License. */
 #include "paddle/fluid/memory/allocation/mmap_allocator.h"
 #include "paddle/fluid/pybind/tensor_py.h"
 #include "paddle/phi/core/ddim.h"
+// #include "paddle/fluid/framework/string_array.h"
 
 namespace paddle {
 namespace pybind {
@@ -1434,6 +1435,25 @@ static PyObject* tensor_method__uva(TensorObject* self, PyObject* args,
 }
 #endif
 
+// static PyObject* eager_tensor_method_set_vocab(TensorObject* self,
+//                                                PyObject* args,
+//                                                PyObject* kwargs) {
+//   EAGER_TRY
+
+//   auto* self_tensor =
+//       static_cast<paddle::framework::LoDTensor*>(self->tensor.impl().get());
+//   PyObject* dict = PyTuple_GET_ITEM(args, 0);
+//   if (PyDict_Check(dict)) {
+//     std::unordered_map<std::wstring, std::int32_t> dict_ =
+//     pybind::CastPyArg2Vocab(dict, 0);
+//     *self_tensor->data<std::unordered_map<std::wstring, std::int32_t>>() =
+//     dict_;
+//   }
+//   Py_INCREF(Py_None);
+//   return Py_None;
+//   EAGER_CATCH_AND_THROW_RETURN_NULL
+// }
+
 PyMethodDef variable_methods[] = {
     {"numpy", (PyCFunction)(void (*)(void))tensor_method_numpy,
      METH_VARARGS | METH_KEYWORDS, NULL},
@@ -1539,6 +1559,8 @@ PyMethodDef variable_methods[] = {
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"_offset", (PyCFunction)(void (*)(void))tensor__offset,
      METH_VARARGS | METH_KEYWORDS, NULL},
+// {"set_vocab", (PyCFunction)(void (*)(void))eager_tensor_method_set_vocab,
+//  METH_VARARGS | METH_KEYWORDS, NULL},
 #if defined(PADDLE_WITH_CUDA)
     {"_tensor_uva", (PyCFunction)(void (*)(void))tensor_method__uva,
      METH_VARARGS | METH_KEYWORDS, NULL},
