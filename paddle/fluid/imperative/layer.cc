@@ -140,6 +140,70 @@ static std::string DebugString(
 }
 
 template <typename VarType>
+static std::string OpString(const std::string& name,
+                            const std::vector<std::shared_ptr<VarType>>& vars) {
+  std::stringstream ss;
+  ss << name << "{";
+
+  for (size_t i = 0; i < vars.size(); ++i) {
+    if (i > 0) ss << ", ";
+
+    if (vars[i] == nullptr) {
+      ss << "NULL";
+      continue;
+    }
+    ss << GetNameFromVar(vars[i]) << "[";
+    const framework::Variable& var = vars[i]->Var();
+    if (!var.IsInitialized()) {
+      ss << "NOT_INITED_VAR";
+    } else if (var.IsType<framework::LoDTensor>()) {
+      auto& tensor = var.Get<framework::LoDTensor>();
+      ss << "LoDTensor<";
+      if (tensor.IsInitialized()) {
+        ss << framework::DataTypeToString(
+                  framework::TransToProtoVarType(tensor.dtype()))
+           << ", ";
+        ss << tensor.place() << ", ";
+        ss << "(" << tensor.dims() << ")";
+        // ss << "name:" << name << " tensor value: ( "<< tensor << " )";
+        VLOG(1) << "=======================================";
+        VLOG(1) << "name:" << name << " " << tensor;
+        VLOG(1) << "=======================================";
+
+      } else {
+        ss << "NOT_INITED";
+      }
+      ss << ">";
+    } else if (var.IsType<phi::SelectedRows>()) {
+      ss << "SelectedRows<";
+      auto& selected_rows = var.Get<phi::SelectedRows>();
+      auto& tensor = selected_rows.value();
+      auto& rows = selected_rows.rows();
+      if (tensor.IsInitialized()) {
+        ss << framework::DataTypeToString(
+                  framework::TransToProtoVarType(tensor.dtype()))
+           << ", ";
+        ss << tensor.place() << ", ";
+        ss << "height(" << selected_rows.height() << "), rows(";
+        std::for_each(rows.cbegin(), rows.cend(), [&ss](const int64_t r) {
+          ss << r << " ";
+        });
+        ss << "), dims(" << tensor.dims() << ")";
+      } else {
+        ss << "NOT_INITED";
+      }
+      ss << ">";
+    } else {
+      ss << "UNRESOLVED_TYPE";
+    }
+    ss << "]";
+  }
+
+  ss << "}";
+  return ss.str();
+}
+
+template <typename VarType>
 static std::string LayerDebugStringImpl(const std::string& op_type,
                                         const NameVarMap<VarType>& ins,
                                         const NameVarMap<VarType>& outs) {
@@ -162,7 +226,53 @@ static std::string LayerDebugStringImpl(const std::string& op_type,
     ss << DebugString<VarType>(pair.first, pair.second);
     ++i;
   }
+
   return ss.str();
+}
+
+template <typename VarType>
+static std::string OpStringImpl(const std::string& op_type,
+                                const NameVarMap<VarType>& ins,
+                                const NameVarMap<VarType>& outs) {
+  std::stringstream ss;
+  ss << "Op(" << op_type << "): ";
+
+  ss << "Inputs: ";
+
+  size_t i = 0;
+  for (auto& pair : ins) {
+    if (i > 0) ss << ", ";
+    ss << OpString<VarType>(pair.first, pair.second);
+    ++i;
+  }
+
+  ss << ",   Outputs: ";
+  i = 0;
+  for (auto& pair : outs) {
+    if (i > 0) ss << ", ";
+    ss << OpString<VarType>(pair.first, pair.second);
+    ++i;
+  }
+
+  return ss.str();
+}
+
+std::string PrintOpString(const std::string& op_type,
+                          const NameVarMap<VarBase>& ins,
+                          const NameVarMap<VarBase>& outs) {
+  return OpStringImpl<VarBase>(op_type, ins, outs);
+}
+
+std::string PrintOpString(const std::string& op_type,
+                          const NameVarMap<VariableWrapper>& ins,
+                          const NameVarMap<VariableWrapper>& outs) {
+  return OpStringImpl<VariableWrapper>(op_type, ins, outs);
+}
+
+std::string PrintOpString(const std::string& op_type,
+                          const NameVarMap<egr::EagerVariable>& ins,
+                          const NameVarMap<egr::EagerVariable>& outs) {
+  return OpStringImpl<egr::EagerVariable>(op_type, ins, outs);
 }
 
 std::string LayerDebugString(const std::string& op_type,
@@ -499,7 +609,7 @@ static void OpBaseRunImpl(const framework::OperatorBase& op,
     }
   }
 
-  VLOG(5) << LayerDebugString(op.Type(), ins, outs);
+  VLOG(4) << LayerDebugString(op.Type(), ins, outs);
 
   /**
    * [ Why need temporary inputs here? ]
@@ -525,8 +635,14 @@ static void OpBaseRunImpl(const framework::OperatorBase& op,
       PrepareData<VarType>(*op_kernel, ins, prepared_op.kernel_type());
   if (tmp_ins_ptr == nullptr) {
     prepared_op.Run(ins, outs, attrs, default_attrs);
+    if (op.Type() == "matmul_v2_grad_grad") {
+      VLOG(1) << PrintOpString(op.Type(), ins, outs);
+    }
   } else {
     prepared_op.Run(*tmp_ins_ptr, outs, attrs, default_attrs);
+    if (op.Type() == "matmul_v2_grad_grad") {
+      VLOG(1) << PrintOpString(op.Type(), *tmp_ins_ptr, outs);
+    }
   }
 
   VLOG(4) << LayerDebugString(op.Type(), ins, outs);

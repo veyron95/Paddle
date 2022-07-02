@@ -256,8 +256,18 @@ void GradNodeBase::SetGradOutMeta(const paddle::experimental::Tensor& fwd_in,
           paddle::platform::errors::Fatal("Attempting to copy DenseTensorMeta "
                                           "with phi::DataType::UNDEFINED,"
                                           "which is illegal."));
+      VLOG(1) << "=== before meta.SetPlace(fwd_in.place())";
+      VLOG(1) << "=== dense_tensor is initialized(): "
+              << dense_tensor->initialized();
+      VLOG(1) << "=== fwd_in is initialized(): " << fwd_in.initialized();
       meta.SetTensorMeta(dense_tensor->meta());
-      meta.SetPlace(fwd_in.place());
+      if (fwd_in.initialized()) {
+        meta.SetPlace(fwd_in.place());
+      } else {
+        meta.SetPlace(phi::Place());
+      }
+
+      VLOG(1) << "=== after meta.SetPlace(fwd_in.place())";
     }
   } else {
     VLOG(6) << "Unable to initialize the DenseTensorMeta of GradSlotMeta with "
@@ -316,7 +326,12 @@ void GradNodeBase::SetGradOutMeta(
                               "with phi::DataType::UNDEFINED,"
                               "which is illegal."));
         meta.SetTensorMeta(dense_tensor->meta());
-        meta.SetPlace(fwd_in_tensor.place());
+        // meta.SetPlace(fwd_in_tensor.place());
+        if (fwd_in_tensor.initialized()) {
+          meta.SetPlace(fwd_in_tensor.place());
+        } else {
+          meta.SetPlace(phi::Place());
+        }
       }
     } else {
       VLOG(6)

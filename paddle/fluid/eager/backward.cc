@@ -107,10 +107,17 @@ class GeneralGrad {
          input_target_nodes_inputmeta_map_) {
       queue.push_back(target_nodes_inputmeta_pair.first);
     }
-
+    std::unordered_set<GradNodeBase*> visited;
     while (!queue.empty()) {
       auto* target_node = queue.front();
       queue.pop_front();
+      if (visited.count(target_node)) {
+        continue;
+      }
+      visited.insert(target_node);
+      if (IsPotentialStopNodes(target_node)) {
+        potential_stop_nodes_.erase(target_node);
+      }
       if (!(depending_nodes_)[target_node].empty()) {
         auto precedding_nodes = (depending_nodes_)[target_node];
         for (auto pre_nodes : precedding_nodes) {
@@ -665,7 +672,7 @@ std::vector<paddle::experimental::Tensor> RunBackward(
   VLOG(3) << "Run Backward";
   while (!queue.empty()) {
     GradNodeBase* node = queue.front();
-    VLOG(6) << "Running GradNode:" << node->name();
+    VLOG(1) << "Running GradNode:" << node->name() << " addr: " << node;
 
     paddle::platform::RecordEvent node_record_event(
         std::string((*node).name()),
@@ -750,7 +757,8 @@ std::vector<paddle::experimental::Tensor> RunBackward(
         // Since we make edge has as same rank as bwd outputs, we indexing them
         // with the same rank(i, j)
         auto next_node_shared = edge.GetMutableGradNode();
-        VLOG(3) << "Found pending node: " << next_node_shared->name();
+        VLOG(3) << "Found pending node: " << next_node_shared->name()
+                << " addr:" << next_node_shared;
         // Next node could be nullptr if it is leaf tensor with no
         // AccumulationNode attached
         // Or it could also originated from dispensable inputs

@@ -961,6 +961,9 @@ void PartialGradTask::RunEachOp(OpBase *op) {
               op->Attrs(),
               op->DefaultAttrsMap(),
               op->place());
+  // if (op->Type() == "matmul_v2_grad_grad") {
+  //   VLOG(1) << " matmul_v2_grad_grad's input: "<<  ;
+  // }
   if (create_graph_) {
     auto double_grad_node = CreateGradOpNode(op->InnerOp(),
                                              tmp_ins,

@@ -35,6 +35,8 @@ class TensorWrapper {
   TensorWrapper() = default;
   explicit TensorWrapper(const paddle::experimental::Tensor& tensor,
                          bool no_need_buffer = false) {
+    VLOG(1) << "================ in TensorWrapper,  "
+            << tensor.is_initialized();
     // set inplace_version_snapshot_ according to tensor's current inplace
     // version.
     if (tensor.impl() && phi::DenseTensor::classof(tensor.impl().get())) {
@@ -112,6 +114,9 @@ class TensorWrapper {
       }
       recovered_tensor.set_autograd_meta(p_ab_autograd_meta);
     }
+
+    VLOG(1) << "================ in recover,  "
+            << recovered_tensor.is_initialized();
 
     return recovered_tensor;
   }

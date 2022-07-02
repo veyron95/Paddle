@@ -462,6 +462,7 @@ REGISTER_OPERATOR(slice_grad,
                   ops::SliceDoubleOpGradMaker<paddle::imperative::OpBase>,
                   ops::SliceOpGradNoNeedBufferVarsInferer,
                   ops::SliceOpGradVarTypeInference);
+// ops::SliceOpGradNoNeedBufferVarsInferer,
 
 REGISTER_OP_CPU_KERNEL(
     slice,
