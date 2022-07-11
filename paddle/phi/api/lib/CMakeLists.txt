@@ -245,21 +245,21 @@ add_custom_command(
   VERBATIM)
 
 # generate backward api
-add_custom_command(
-  OUTPUT ${bw_api_header_file} ${bw_api_source_file} ${bw_api_header_file_tmp}
-         ${bw_api_source_file_tmp}
-  COMMAND
-    ${PYTHON_EXECUTABLE} ${bw_api_gen_file} --backward_yaml_path
-    ${bw_api_yaml_file} ${legacy_bw_api_yaml_file} --backward_header_path
-    ${bw_api_header_file_tmp} --backward_source_path ${bw_api_source_file_tmp}
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${bw_api_header_file_tmp}
-          ${bw_api_header_file}
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${bw_api_source_file_tmp}
-          ${bw_api_source_file}
-  COMMENT "copy_if_different ${bw_api_header_file} ${bw_api_source_file}"
-  DEPENDS ${bw_api_yaml_file} ${bw_api_gen_file} ${api_gen_base}
-          ${legacy_bw_api_yaml_file}
-  VERBATIM)
+# add_custom_command(
+#   OUTPUT ${bw_api_header_file} ${bw_api_source_file} ${bw_api_header_file_tmp}
+#          ${bw_api_source_file_tmp}
+#   COMMAND
+#     ${PYTHON_EXECUTABLE} ${bw_api_gen_file} --backward_yaml_path
+#     ${bw_api_yaml_file} ${legacy_bw_api_yaml_file} --backward_header_path
+#     ${bw_api_header_file_tmp} --backward_source_path ${bw_api_source_file_tmp}
+#   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${bw_api_header_file_tmp}
+#           ${bw_api_header_file}
+#   # COMMAND ${CMAKE_COMMAND} -E copy_if_different ${bw_api_source_file_tmp}
+#   #         ${bw_api_source_file}
+#   # COMMENT "copy_if_different ${bw_api_header_file} ${bw_api_source_file}"
+#   DEPENDS ${bw_api_yaml_file} ${bw_api_gen_file} ${api_gen_base}
+#           ${legacy_bw_api_yaml_file}
+#   VERBATIM)
 
 # generate sparse api
 add_custom_command(
