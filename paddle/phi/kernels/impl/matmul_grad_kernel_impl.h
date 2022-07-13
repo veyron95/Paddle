@@ -262,11 +262,10 @@ void MatmulGradKernel(const Context& dev_ctx,
     DenseTensor x_help = x;
     DenseTensor y_help = y;
     DenseTensor out_grad_help = out_grad;
-    VLOG(1) << " ========================== 1";
+
     ReshapeXYOutIntoMatrixSequence(
         &x_help, &y_help, &out_grad_help, transpose_x, transpose_y);
 
-    VLOG(1) << " ========================== 2";
     DDim dx_dims;
     if (dx) {
       dx_dims = dx->dims();
@@ -276,7 +275,7 @@ void MatmulGradKernel(const Context& dev_ctx,
 
       y_conj = Conj<T>(dev_ctx, y_help);
     }
-    VLOG(1) << " ========================== 3";
+
     DDim dy_dims;
     if (dy) {
       dy_dims = dy->dims();
@@ -286,7 +285,7 @@ void MatmulGradKernel(const Context& dev_ctx,
 
       x_conj = Conj<T>(dev_ctx, x_help);
     }
-    VLOG(1) << " ========================== 4";
+
     if (transpose_x && transpose_y) {
       CalcInputGrad<T>(
           dev_ctx, y_conj, true, true, out_grad_help, true, false, dx);
@@ -308,7 +307,7 @@ void MatmulGradKernel(const Context& dev_ctx,
       CalcInputGrad<T>(
           dev_ctx, x_conj, true, true, out_grad_help, false, true, dy);
     }
-    VLOG(1) << " ========================== 5";
+
     if (dx) {
       if (dx_dims != x_help.dims()) {
         dx->Resize(dx_dims);
@@ -838,6 +837,7 @@ void MatmulDoubleGradKernel(const Context& dev_ctx,
                                    transpose_x,
                                    transpose_y);
       }
+
       if (ddy) {
         MatMulFunction<Context, T>(dev_ctx,
                                    x_conj,

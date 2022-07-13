@@ -424,13 +424,12 @@ void MultiplyDoubleGradKernel(const Context& dev_ctx,
                               DenseTensor* ddout) {
   if (ddout) dev_ctx.template Alloc<T>(ddout);
 
-  VLOG(1) << "==================== MultiplyDoubleGradKernel 1";
   DenseTensor ddx_safe, ddy_safe;
   funcs::GetDoubleGradSafeTensor<Context, T>(
       dev_ctx, x, ddx.get_ptr(), &ddx_safe);
   funcs::GetDoubleGradSafeTensor<Context, T>(
       dev_ctx, y, ddy.get_ptr(), &ddy_safe);
-  VLOG(1) << "==================== MultiplyDoubleGradKernel 2";
+
   // dx = dout * ddy
   // dy = dout * ddx
   // ddout = ddx * y + x * ddy
@@ -442,18 +441,15 @@ void MultiplyDoubleGradKernel(const Context& dev_ctx,
   // (4) ddout = ddout + dx
   // (5) dx = dout * ddy
   if (ddout) {
-    VLOG(1) << "==================== MultiplyDoubleGradKernel 3";
     auto& place = *dev_ctx.eigen_device();
     // size(ddout) > size(ddx) or we don't have ddx, ddout can't use memory of
     // ddx using inplace
 
     bool without_ddx = (ddx.get_ptr() == nullptr);
     if (!without_ddx) {
-      VLOG(1) << " ================== MultiplyDoubleGradKernel 3-1";
       without_ddx = (ddout->numel() > ddx.get_ptr()->numel());
     }
     if (without_ddx) {
-      VLOG(1) << "==================== MultiplyDoubleGradKernel 4";
       phi::funcs::ElemwiseGradCompute<Context, T, MulGradDX<T>, MulGradDY<T>>(
           dev_ctx,
           ddx_safe,
@@ -465,24 +461,23 @@ void MultiplyDoubleGradKernel(const Context& dev_ctx,
           dy,
           MulGradDX<T>(),
           MulGradDY<T>());
-      VLOG(1) << "==================== MultiplyDoubleGradKernel 5";
+
       DenseTensor ddout_tmp;
       ddout_tmp.Resize(ddout->dims());
       dev_ctx.template Alloc<T>(&ddout_tmp);
-      VLOG(1) << "==================== MultiplyDoubleGradKernel 6";
+
       funcs::DefaultElementwiseOperator<Context,
                                         T,
                                         funcs::MultiplyFunctor<T>,
                                         funcs::InverseMultiplyFunctor<T>>(
           dev_ctx, y, ddx_safe, ddout, axis);
-      VLOG(1) << "==================== MultiplyDoubleGradKernel 7";
 
       funcs::DefaultElementwiseOperator<Context,
                                         T,
                                         funcs::MultiplyFunctor<T>,
                                         funcs::InverseMultiplyFunctor<T>>(
           dev_ctx, ddy_safe, x, &ddout_tmp, axis);
-      VLOG(1) << "==================== MultiplyDoubleGradKernel 8";
+
       auto ddout_t = phi::EigenVector<T>::Flatten(*ddout);
       auto ddout_tmp_t = phi::EigenVector<T>::Flatten(ddout_tmp);
       ddout_t.device(place) = ddout_t + ddout_tmp_t;
@@ -496,48 +491,6 @@ void MultiplyDoubleGradKernel(const Context& dev_ctx,
                                           funcs::InverseMultiplyFunctor<T>>(
             dev_ctx, x, ddy_safe, ddout_tmp, axis);
 
-        VLOG(1) << "==================== MultiplyDoubleGradKernel 10";
-
-        VLOG(1) << "==================== MultiplyDoubleGradKernel 11";
-
-        VLOG(1) << "==================== MultiplyDoubleGradKernel 12";
-        funcs::DefaultElementwiseOperator<Context,
-                                          T,
-                                          funcs::MultiplyFunctor<T>,
-                                          funcs::InverseMultiplyFunctor<T>>(
-            dev_ctx, ddx_safe, y, ddout, axis);
-        VLOG(1) << "==================== MultiplyDoubleGradKernel 3";
-        auto ddout_t = phi::EigenVector<T>::Flatten(*ddout);
-        auto ddout_tmp_t = phi::EigenVector<T>::Flatten(*ddout_tmp);
-        ddout_t.device(place) = ddout_t + ddout_tmp_t;
-        VLOG(1) << "==================== MultiplyDoubleGradKernel 14";
-
-        funcs::DefaultElementwiseOperator<Context,
-                                          T,
-                                          funcs::MultiplyFunctor<T>,
-                                          funcs::InverseMultiplyFunctor<T>>(
-            dev_ctx, dout, ddy_safe, dx, axis);
-
-      } else {
-        // DenseTensor* ddout_tmp = ddout;
-        // funcs::DefaultElementwiseOperator<Context,
-        //                                 T,
-        //                                 funcs::MultiplyFunctor<T>,
-        //                                 funcs::InverseMultiplyFunctor<T>>(
-        //   dev_ctx, x, ddy_safe, ddout_tmp, axis);
-
-        // auto ddout_t1 = phi::EigenVector<T>::Flatten(*ddout_tmp);
-
-        funcs::DefaultElementwiseOperator<Context,
-                                          T,
-                                          funcs::MultiplyFunctor<T>,
-                                          funcs::InverseMultiplyFunctor<T>>(
-            dev_ctx, ddx_safe, y, ddout, axis);
-
-        auto ddout_t2 = phi::EigenVector<T>::Flatten(*ddout);
-        ddout_t2.device(place) = ddout_t2;
-      }
-      if (dy) {
         // NOTE: in the following ElemwiseGradCompute, for the
         // first output tensor is nullptr, the branch to calculate first
         // output tensor will not be activated, DivGradDx function will not
@@ -554,12 +507,49 @@ void MultiplyDoubleGradKernel(const Context& dev_ctx,
             dy,
             MulGradDX<T>(),
             MulGradDY<T>());
+
+        funcs::DefaultElementwiseOperator<Context,
+                                          T,
+                                          funcs::MultiplyFunctor<T>,
+                                          funcs::InverseMultiplyFunctor<T>>(
+            dev_ctx, ddx_safe, y, ddout, axis);
+
+        auto ddout_t = phi::EigenVector<T>::Flatten(*ddout);
+        auto ddout_tmp_t = phi::EigenVector<T>::Flatten(*ddout_tmp);
+        ddout_t.device(place) = ddout_t + ddout_tmp_t;
+
+        funcs::DefaultElementwiseOperator<Context,
+                                          T,
+                                          funcs::MultiplyFunctor<T>,
+                                          funcs::InverseMultiplyFunctor<T>>(
+            dev_ctx, dout, ddy_safe, dx, axis);
+
+      } else {
+        DenseTensor tmp_a(ddout->dtype());
+        tmp_a.Resize(ddout->dims());
+
+        dev_ctx.template Alloc<T>(&tmp_a);
+
+        funcs::DefaultElementwiseOperator<Context,
+                                          T,
+                                          funcs::MultiplyFunctor<T>,
+                                          funcs::InverseMultiplyFunctor<T>>(
+            dev_ctx, x, ddy_safe, &tmp_a, axis);
+
+        auto ddout_t1 = phi::EigenVector<T>::Flatten(tmp_a);
+
+        funcs::DefaultElementwiseOperator<Context,
+                                          T,
+                                          funcs::MultiplyFunctor<T>,
+                                          funcs::InverseMultiplyFunctor<T>>(
+            dev_ctx, ddx_safe, y, ddout, axis);
+
+        auto ddout_t2 = phi::EigenVector<T>::Flatten(*ddout);
+        ddout_t2.device(place) = ddout_t2 + ddout_t1;
       }
-      VLOG(1) << "==================== MultiplyDoubleGradKernel 15";
     }
   } else {
     if (dx && dy) {
-      VLOG(1) << "==================== MultiplyDoubleGradKernel 16";
       phi::funcs::ElemwiseGradCompute<Context, T, MulGradDX<T>, MulGradDY<T>>(
           dev_ctx,
           ddx_safe,
@@ -571,7 +561,6 @@ void MultiplyDoubleGradKernel(const Context& dev_ctx,
           dy,
           MulGradDX<T>(),
           MulGradDY<T>());
-      VLOG(1) << "==================== MultiplyDoubleGradKernel 17";
     }
   }
 }

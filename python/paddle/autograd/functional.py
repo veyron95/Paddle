@@ -144,7 +144,6 @@ def _double_backward_trick(ys, xs, v):
     # theory, but it's required to set stop_gradient=False.
     ys_grad = _zeros_like_with_grad(ys)
     xs_grad = _grad(ys, xs, ys_grad)
-    # print("=== xs_grad:", xs_grad)
     return _grad(xs_grad, ys_grad, v)
 
 
